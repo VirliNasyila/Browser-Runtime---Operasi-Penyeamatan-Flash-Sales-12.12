@@ -1,6 +1,10 @@
 # Laporan audit performa dan interaksi TokoKilat
 
-Tim: ....  Anggota: ....  Tanggal: ....
+Anggota:  
+1. Faiz Akhsya 241524039
+2. Idotoho Reimon Simanjuntak 241524047
+3. Virli Nasyila Putri 241524062
+Tanggal: 25/09/2026
 Panjang maksimal setara 6 halaman (tidak termasuk lampiran gambar).
 
 ## 1. Ringkasan eksekutif (maks. 150 kata)

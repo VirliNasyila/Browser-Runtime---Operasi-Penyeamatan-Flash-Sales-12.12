@@ -31,7 +31,132 @@ Branch atau commit tempat usulan diterapkan: https://github.com/VirliNasyila/Bro
   - [ ] Menimbulkan regresi (metrik lain, fitur, aksesibilitas, atau memori memburuk)
   - [ ] Melanggar aturan main (menghapus fitur, mengubah berkas terlarang, dan sebagainya)
   - [ ] Memperbaiki sesuatu yang tidak berpengaruh terukur
-- **Bukti:** angka dan tangkapan layar trace sebelum dan sesudah usulan AI diterapkan.
+- **Bukti:** angka sebelum dan sesudah usulan AI diterapkan.
+sebelum usulan AI 
+{
+  "waktu": "2026-09-30T12:29:49.986Z",
+  "jumlahLongTask": 2,
+  "longTaskTerlama": 9368,
+  "totalBlokir": 17074,
+  "jumlahInteraksi": 7,
+  "inp": 15848,
+  "inpRinci": {
+    "durasi": 15848,
+    "jenis": "pointerdown",
+    "target": "?",
+    "tundaInput": 6531,
+    "proses": 0,
+    "presentasi": 9317
+  },
+  "limaInteraksiTerlambat": [
+    {
+      "durasi": 15848,
+      "jenis": "pointerdown",
+      "target": "?",
+      "tundaInput": 6531,
+      "proses": 0,
+      "presentasi": 9317
+    },
+    {
+      "durasi": 14128,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 4813,
+      "proses": 0,
+      "presentasi": 9315
+    },
+    {
+      "durasi": 13888,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 12635,
+      "proses": 0,
+      "presentasi": 1253
+    },
+    {
+      "durasi": 12752,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 12132,
+      "proses": 0,
+      "presentasi": 620
+    },
+    {
+      "durasi": 12600,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 12132,
+      "proses": 0,
+      "presentasi": 468
+    }
+  ],
+  "cls": 0.423,
+  "frameLambat": 55,
+  "frameTerburuk": 17151
+}
+
+setelah usulan AI
+{
+  "waktu": "2026-09-30T12:41:26.157Z",
+  "jumlahLongTask": 0,
+  "longTaskTerlama": 0,
+  "totalBlokir": 0,
+  "jumlahInteraksi": 8,
+  "inp": 48,
+  "inpRinci": {
+    "durasi": 48,
+    "jenis": "pointerdown",
+    "target": "?",
+    "tundaInput": 2,
+    "proses": 0,
+    "presentasi": 46
+  },
+  "limaInteraksiTerlambat": [
+    {
+      "durasi": 48,
+      "jenis": "pointerdown",
+      "target": "?",
+      "tundaInput": 2,
+      "proses": 0,
+      "presentasi": 46
+    },
+    {
+      "durasi": 48,
+      "jenis": "keyup",
+      "target": "#kolom-cari",
+      "tundaInput": 0,
+      "proses": 0,
+      "presentasi": 48
+    },
+    {
+      "durasi": 48,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 0,
+      "proses": 0,
+      "presentasi": 48
+    },
+    {
+      "durasi": 40,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 1,
+      "proses": 0,
+      "presentasi": 39
+    },
+    {
+      "durasi": 40,
+      "jenis": "keydown",
+      "target": "#kolom-cari",
+      "tundaInput": 0,
+      "proses": 0,
+      "presentasi": 40
+    }
+  ],
+  "cls": 0.059,
+  "frameLambat": 0,
+  "frameTerburuk": 0
+}
 - **Mengapa AI bisa keliru di sini:** AI hanya diberi gejala ("lag saat mengetik"), bukan trace. Dari
   kode saja, debounce terlihat seperti perbaikan yang benar dan memang MENGURANGI gejala (tidak ada
   lagi kerja di setiap huruf) -- tapi AI tidak tahu bahwa `samakanTinggiJudul` di dalam `renderProduk`
@@ -46,4 +171,7 @@ Branch atau commit tempat usulan diterapkan: https://github.com/VirliNasyila/Bro
 ---
 
 ## Refleksi (maks. 200 kata)
-Untuk jenis pekerjaan apa AI paling membantu di tugas ini, dan di mana Anda harus paling waspada?
+AI paling membantu dalam **eksekusi sintaksis dan implementasi teknis cepat**, seperti membuat boilerplate fungsi *debounce*, menyusun struktur *IntersectionObserver*, atau mengubah manipulasi DOM manual menjadi aturan CSS (`-webkit-line-clamp`). AI sangat mempercepat proses *refactoring* begitu strategi perbaikan sudah ditentukan oleh developer.
+
+Area yang paling memerlukan **kewaspadaan tinggi** adalah **diagnosis performa *runtime* dan penentuan akar masalah**. AI membaca kode secara statis, sehingga tidak memiliki visibilitas terhadap perilaku *browser rendering engine*, *layout thrashing*, maupun kemacetan antrean *task* pada *main thread*. Tanpa data *profiling/trace*, AI cenderung memberikan perbaikan di permukaan (seperti sekadar menambah *debounce*) yang mengurangi frekuensi lag tetapi membiarkan *long task* berat tetap terjadi. Oleh karena itu, analisis metrik nyata dan pengujian *trace* independen tetap sepenuhnya menjadi tanggung jawab developer.
+
