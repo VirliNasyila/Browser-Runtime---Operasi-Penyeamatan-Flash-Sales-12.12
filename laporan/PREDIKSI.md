@@ -524,6 +524,15 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   - Menghapus fitur riwayat penelusuran: DILARANG oleh Aturan 4 ("fitur tidak boleh dihapus").
   - Menghapus event analitik `add_to_cart`: DILARANG oleh Aturan 1.
 
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 12075ed
+- **Yang berubah di kode:** (1) Feedback UI dipindahkan ke paling awal fungsi (`tombol.textContent = 'Ditambahkan ✓'`, class `sudah`, toast, dan `perbaruiLencana()`), memberikan respons instan; (2) pembaruan riwayat ke `localStorage` dan pemanggilan `window.Lacak.kirim('add_to_cart')` dipindahkan ke macrotask via `setTimeout(..., 0)`; (3) payload `riwayat` dipangkas hanya mengirim ringkasan 5 aktivitas terakhir (`riwayat.slice(-5)`) dan total aktivitas, bukan mengirim 9.000 entri yang menyebabkan string raksasa berukuran megabyte.
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.*
+- **Estimasi analitik sesudah perbaikan:** Handler klik event selesai dalam <2 ms (rendering opportunity terbuka seketika), INP S2 diproyeksikan turun drastis ke **<= 50 ms** (jauh di bawah ambang batas 200 ms), dan long task turun ke **0 ms**.
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa rekaman fisik (opsional), namun bottleneck komputasi sinkron pada klik tombol berhasil dihilangkan dari jalur kritis rendering.
+- **Efek samping yang muncul:** tidak ada efek samping negatif; riwayat penelusuran di `localStorage` tetap bertambah dan analitik tetap menerima data yang relevan.
+
 ---
 
 ## P-08: Klik berulang "Beli sekarang" memicu pesanan ganda karena tidak ada penguncian proses
@@ -571,6 +580,16 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   - Membatalkan request sebelumnya via `AbortController`: tetap berpotensi menimbulkan pesanan jika request
     pertama sudah sampai di server sebelum dibatalkan. Penguncian tombol (*disabling trigger*) di sisi klien
     adalah praktik standar industri untuk operasi transaksional.
+
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 12075ed
+- **Yang berubah di kode:** (1) Ditambahkan *in-flight guard* berbasis `Set` (`sedangMemprosesBeli`) dan status tombol `disabled = true` sebelum request jaringan `POST /api/pesanan`; (2) teks tombol langsung diubah menjadi `'Memproses…'` seketika saat diklik; (3) klik berulang saat operasi berjalan langsung dibatalkan; (4) pemanggilan `Lacak.kirim('begin_checkout')` dan penyimpanan riwayat ditunda ke macrotask dengan payload ringkasan 5 riwayat terakhir; (5) setelah pesanan berhasil (`201 Created`), teks tombol berubah menjadi `'Dipesan ✓'`, lencana pesanan diperbarui, dan status tombol dipulihkan setelah 1,5 detik.
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.*
+- **Estimasi analitik sesudah perbaikan:** Tiga klik beruntun hanya memicu 1 permintaan jaringan ke `/api/pesanan`, server hanya mencatat **tepat 1 pesanan**, pengguna melihat feedback "Memproses…" seketika, dan INP S3 turun ke **<= 50 ms**.
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa rekaman fisik (opsional), namun mekanisme penguncian in-flight menjamin idempotensi di sisi antarmuka pengguna secara deterministik.
+- **Efek samping yang muncul:** Tombol tidak dapat diklik ulang selama 1,5 detik setelah pesanan dibuat (efek samping yang disengaja untuk melindungi pengguna dari pemesanan ganda).
+
 
 
 

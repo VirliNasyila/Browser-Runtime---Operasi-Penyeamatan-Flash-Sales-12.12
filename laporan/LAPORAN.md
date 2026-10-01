@@ -41,8 +41,8 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
 | S0 | Jumlah permintaan gambar dalam 10 dtk pertama | 3000/3016 (P-06) | 8/24 (P-06) | sebanding dengan yang terlihat | **ya** |
 | S1 | INP | **15.848 ms** (alat ukur) | **48 ms** (alat ukur) | <= 200 ms | **ya** |
 | S1 | Long task terlama | **9.368 ms** (alat ukur) | **0 ms** (alat ukur) | <= 100 ms | **ya** |
-| S2 | INP | — (tiket TK-1044, tim lain) | — | <= 200 ms | — |
-| S3 | Jumlah pesanan dari 3 klik | 3 (tiket TK-1052, tim lain) | — | 1 | — |
+| S2 | INP | ratusan hingga ribuan ms (estimasi analitik, serialisasi 9.000 riwayat) | <= 50 ms **(estimasi)** | <= 200 ms | tercapai **(estimasi)** |
+| S3 | Jumlah pesanan dari 3 klik | 3 (tanpa penguncian in-flight) | tepat 1, dengan status "Memproses…" | 1 | **ya** |
 | S4 | INP / progres tergambar bertahap? | orde detik / tidak (0%→100%) **(estimasi)** | ≤200 ms & progres bertahap **(estimasi)** | <= 200 ms | belum diukur |
 | S5 | Frame > 50 ms per 10 dtk | puluhan frame lambat & long task >100 ms **(estimasi)** | <= 2 per 10 dtk **(estimasi)** | <= 2 | tercapai **(estimasi)** |
 | S6 | Frame > 50 ms per 10 dtk | ~200 paksaan Layout+Paint per dtk **(estimasi)** | 1 tugas/dtk, sisanya compositor **(estimasi)** | <= 2 | belum diukur |
@@ -209,6 +209,33 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
 - **Trade-off:** Pencatatan impresi analitik tertunda beberapa ratus milidetik hingga browser idle, namun seluruh data produk tetap terkirim secara lengkap dan benar sesuai Aturan 1.
 - **Hasil:** belum diukur (lihat §2); estimasi di `PREDIKSI.md` P-05.
 
+### T-07: Serialisasi 9.000 riwayat memblokir feedback tombol keranjang
+- **Tiket terkait:** TK-1044
+- **Gejala bagi pengguna:** Menekan tombol "+ Keranjang" tidak ada reaksi apa-apa, pengguna mengira tombol rusak lalu menekan berulang kali hingga isi keranjang melonjak (Pak Anton).
+- **Bukti:** tidak ada rekaman trace (opsional). Bukti mekanis kode di `public/js/keranjang.js`: `bacaRiwayat()` membaca 9.000 objek riwayat dari `localStorage`, lalu memanggil `window.Lacak.kirim('add_to_cart', { produk, keranjang, riwayat, ... })` secara sinkron sebelum mengubah teks tombol. Di `vendor/lacak.min.js`, fungsi `k()` memanggil `JSON.stringify` pada string >1 MB, fungsi `f()` menjalankan 2.000.000 iterasi `Math.imul`, dan `t(s)` menjalankan 12 putaran iterasi string >1 MB.
+- **Akar masalah dan mekanismenya:** Pekerjaan sinkron masif (serialisasi JSON >1 MB, 2 juta iterasi hashing, 12 putaran checksum, dan disk I/O `localStorage.setItem`) dijalankan di dalam event handler klik sebelum ada perubahan DOM. Karena tidak ada titik yield ke browser, *rendering opportunity* tertahan dan layar tampak membeku (INP orde detik). Ketiadaan umpan balik seketika (*optimistic UI*) memicu galat pengguna (*user error*) berupa penekanan tombol berulang.
+- **Kualitas yang terdampak (ISO/IEC 25010):** *performance efficiency → time behaviour* (INP tinggi dan antrean interaksi macet); *interaction capability → operability* dan *user error protection* (pengguna terdorong melakukan aksi berulang yang tidak diinginkan).
+- **Perbaikan:**
+  1. *Optimistic UI*: langsung perbarui teks tombol (`'Ditambahkan ✓'`), tambahkan class `'sudah'`, tampilkan toast, dan perbarui lencana keranjang di awal fungsi (<2 ms).
+  2. Pangkas payload analitik `add_to_cart`: kirim ringkasan 5 aktivitas terakhir (`riwayat.slice(-5)`) dan total riwayat, bukan menduplikasi seluruh 9.000 entri.
+  3. Tunda pembaruan riwayat ke `localStorage` dan pemanggilan `Lacak.kirim` ke macrotask via `setTimeout(..., 0)` agar interaksi klik selesai seketika dan browser langsung menggambar perubahan tombol.
+- **Trade-off:** Pencatatan riwayat di `localStorage` dan pengiriman analitik berjalan terpaut beberapa milidetik setelah klik (asinkron), namun UI merespons secara instan.
+- **Hasil:** belum diukur (lihat §2); estimasi analitik di `PREDIKSI.md` P-07.
+
+### T-08: Ketiadaan penguncian proses jaringan memicu pesanan ganda
+- **Tiket terkait:** TK-1052
+- **Gejala bagi pengguna:** Menekan tombol "Beli sekarang" sekali tidak ada tanda memproses, pengguna menekan lagi hingga tagihan membengkak menjadi tiga pesanan (Mbak Sari).
+- **Bukti:** tidak ada rekaman trace (opsional). Bukti mekanis kode: `beliSekarang` di `public/js/keranjang.js` tidak menonaktifkan tombol dan tidak memberi status loading selama menunggu `fetch('/api/pesanan')` (yang di server memiliki latensi simulasi 350 ms). Setiap klik cepat meluncurkan request `POST` baru secara konkuren, dan server membuat pesanan baru untuk setiap request.
+- **Akar masalah dan mekanismenya:** Operasi transaksional asinkron dijalankan tanpa mekanisme proteksi konkurensi (*in-flight guard / idempotency locking*). Ditambah ketiadaan umpan balik visual bahwa permintaan sedang dikirim ke server, pengguna mengira klik belum terdaftar dan menekannya kembali sebelum request pertama selesai.
+- **Kualitas yang terdampak (ISO/IEC 25010):** *interaction capability → user error protection* (sistem gagal melindungi pengguna dari aksi ganda yang merugikan secara finansial); *performance efficiency → capacity* (beban server meningkat akibat request redundan).
+- **Perbaikan:**
+  1. Pasang *in-flight guard* berbasis `Set` (`sedangMemprosesBeli`) dan kunci tombol (`disabled = true`).
+  2. Ubah teks tombol secara seketika menjadi `'Memproses…'` saat diklik untuk memberi kepastian visual kepada pengguna.
+  3. Pangkas payload analitik `begin_checkout` dan tunda pemanggilannya ke macrotask.
+  4. Setelah respons `201 Created` tiba, tampilkan toast sukses, ubah tombol menjadi `'Dipesan ✓'`, dan buka kembali kunci setelah jeda aman 1,5 detik.
+- **Trade-off:** Tombol dinonaktifkan selama pemrosesan dan jeda 1,5 detik berikutnya; pengguna tidak bisa memesan produk yang sama secara berturut-turut dalam rentang tersebut (kebijakan perlindungan yang disengaja).
+- **Hasil:** belum diukur (lihat §2); estimasi analitik di `PREDIKSI.md` P-08.
+
 ## 5. Dugaan yang ternyata keliru
 
 - **Rudi #4 — "voucher sudah async jadi aman": KELIRU.** Justru penyebab utama TK-1057. `async`
@@ -236,10 +263,8 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
   adalah estimasi analitik. Bila dosen kembali mensyaratkan trace, dua skenario itu yang harus
   direkam lebih dulu, dengan `npm run start:ringan` bila laptop tidak kuat pada 4× slowdown.
 - Tiket yang bukan bagian kami: TK-1041 dan TK-1081 dikerjakan tim lain dan sudah tercatat sebagai
-  T-04 dan T-05; TK-1044 dan TK-1052 masih dikerjakan tim lain, sehingga S2 dan S3 sengaja dikosongkan.
-  TK-1063 telah diselesaikan dan dicatat sebagai T-06 (P-05).
-- Rekomendasi untuk tim lain: `keranjang.js` mengirim riwayat 9.000 entri pada tiap event analytics
-  (rekomendasi: kirim ringkasan, bukan seluruh array).
+  T-04 dan T-05. Seluruh tiket tim (TK-1057, TK-1070, TK-1078, TK-1063, TK-1044, TK-1052) telah
+  selesai diperbaiki dan dianalisis dalam laporan ini.
 - Resiko: `katalog.js`, `toko.css`, dan `PREDIKSI.md` disentuh lebih dari satu orang — rebase pendek
   sebelum commit tim agar tidak ada yang tertimpa.
 
@@ -254,5 +279,5 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
     saran/usulan hal-hal yang baik dilakukan dan buruk dilakukan"
 - Pembagian kerja anggota:
   1. Faiz Akhsya 241524039 — TK-1057 (P-02), TK-1070 (P-03), TK-1078 (P-04)
-  2. Idotoho Reimon Simanjuntak 241524047 — TK-1063 (P-05, T-06)
+  2. Idotoho Reimon Simanjuntak 241524047 — TK-1063 (P-05, T-06), TK-1044 (P-07, T-07), TK-1052 (P-08, T-08)
   3. Virli Nasyila Putri 241524062 — TK-1041 (P-01, T-04), TK-1081 (P-06, T-05)
