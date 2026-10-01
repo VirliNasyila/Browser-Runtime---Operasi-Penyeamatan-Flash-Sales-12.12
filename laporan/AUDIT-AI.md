@@ -5,8 +5,12 @@ minimal dua tiket, sebaiknya di branch terpisah. Uji usulannya dengan protokol p
 Temukan minimal **dua** usulan bermasalah. Usulan AI yang bagus juga boleh dicatat, tetapi tidak
 menggantikan dua temuan wajib.
 
-Alat AI yang dipakai: claude/gemini dll
+Alat AI yang dipakai: opencode (agent coding, model mimo-v2.6-flash) — A-02 dan A-03.
+A-01 memakai AI percakapan (dikerjakan tim).
 Branch atau commit tempat usulan diterapkan: https://github.com/VirliNasyila/Browser-Runtime---Operasi-Penyeamatan-Flash-Sales-12.12
+Catatan A-02/A-03: usulan **tidak diterapkan ke `main`** — keduanya diuji lewat analisis kode terhadap
+berkas yang sama dan diverifikasi tidak memenuhi target/melanggar aturan main (lihat butir "Bukti").
+Pengukuran trace tidak dilakukan (opsional menurut dosen), sehingga bukti berupa kode + CLS alat ukur.
 
 
 ---
@@ -167,6 +171,93 @@ setelah usulan AI
 - **Perbaikan yang benar menurut tim:** Debounce tetap diperlukan (dipakai juga di P-01), TAPI harus
   digabung dengan menghilangkan layout thrashing (ganti ke CSS line-clamp) dan memecah render jadi
   bertahap -- lihat PREDIKSI.md P-01.
+
+---
+
+## A-02: requestAnimationFrame untuk hitung mundur & teks berjalan (TK-1070)
+
+- **Tiket yang diminta diperbaiki:** TK-1070 ("baru buka 5 menit HP sudah panas")
+- **Prompt yang diberikan (ringkas):** "Halaman flash sale ini bikin HP panas walau cuma dibuka
+  diam-diam, tolong bikin lebih hemat baterai tanpa menghapus hitung mundur dan teks berjalan."
+- **Usulan AI (ringkas):**
+  ```js
+  // ganti setInterval(10ms) dengan rAF supaya sinkron dengan refresh rate layar
+  let x = teks.parentElement.offsetWidth;
+  function gambar() {
+    x -= 1;
+    if (x < -teks.offsetWidth) x = teks.parentElement.offsetWidth;
+    teks.style.left = x + 'px';
+    requestAnimationFrame(gambar);
+  }
+  requestAnimationFrame(gambar);
+  ```
+  hitung mundur juga dipindah ke rAF dengan pembacaan `offsetWidth` yang sama.
+- **Jenis masalah pada usulan:**
+  - [ ] Salah diagnosis (memperbaiki hal yang bukan penyebab)
+  - [x] Tidak lengkap (gejala berkurang tetapi akar masalah masih ada)
+  - [x] Memperbaiki sesuatu yang tidak berpengaruh memadai
+  - [ ] Menimbulkan regresi
+  - [ ] Melanggar aturan main
+- **Bukti (analisis kode, tanpa trace — lihat LAPORAN §2):** rAF hanya memangkas frekuensi dari
+  100 ke ~60 tick/dtk, tetap **membangunkan main thread setiap frame** dan tetap menjalankan pola
+  baca layout (`offsetWidth`) → tulis gaya (`style.left`) di dalam frame yang sama, yaitu persis
+  paksaan Layout + Paint yang membuat baterai terbakar. Yang hilang hanya ~40% frekuensi; target
+  S6 ("aktivitas main thread saat diam mendekati nol") tetap tidak tercapai karena **setiap frame
+  masih memicu kerja di main thread selama pengguna diam**. Selain itu rAF tidak berjalan saat tab
+  di latar belakang, jadi teks berjalan bisa berhenti mengikuti jam.
+- **Mengapa AI bisa keliru di sini:** AI membaca gejala "timer 10 ms boros" secara lokal dan
+  mengenali rAF sebagai pola standar pengganti timer. Ia tidak mengevaluasi *kenapa* callback itu
+  mahal (baca layout + tulis gaya → Layout/Paint), sehingga yang dilakukan hanya menukar satu
+  mekanisme membangunkan thread dengan mekanisme lain. Tanpa melihat trace idle, perbedaan
+  "200 kerja/dtk" vs "60 kerja/dtk" terlihat seperti perbaikan, padahal target menuntut nol.
+- **Perbaikan yang benar menurut tim:** animasi dipindah **sepenuhnya ke compositor**
+  (`@keyframes` + `transform`/`opacity`): teks berjalan jadi CSS murni (dua salinan identik,
+  geser −50% lebar sendiri, nol JavaScript), garis hitung mundur jadi `scaleX` yang hanya ditulis
+  1× per detik, denyut badge pakai `transform`. Satu-satunya tugas tersisa adalah 3 penulisan angka
+  per detik. Lihat `PREDIKSI.md` P-03 dan LAPORAN T-02.
+
+---
+
+## A-03: loading="lazy" + memindahkan banner untuk CLS (TK-1078)
+
+- **Tiket yang diminta diperbaiki:** TK-1078 ("halaman loncat turun sendiri, yang kepencet iklan")
+- **Prompt yang diberikan (ringkas):** "CLS halaman flash sale saya 0,423, tolong perbaiki sampai
+  di bawah 0,1."
+- **Usulan AI (ringkas):**
+  ```js
+  // semua gambar dimuat malas supaya tidak ada pergeseran saat load
+  document.querySelectorAll('.kartu-media img').forEach((img) => { img.loading = 'lazy'; });
+  // banner promo dipindah ke bawah daftar supaya tidak menggeser konten
+  document.querySelector('footer').prepend(banner);
+  ```
+- **Jenis masalah pada usulan:**
+  - [x] Salah diagnosis (memperbaiki hal yang bukan penyebab utama)
+  - [x] Menimbulkan regresi (fitur, aksesibilitas)
+  - [x] Melanggar aturan main
+  - [ ] Tidak lengkap
+  - [ ] Memperbaiki sesuatu yang tidak berpengaruh
+- **Bukti (analisis kode + CLS 0,423 dari alat ukur):**
+  1. `loading="lazy"` **tidak mengurangi CLS sama sekali** pada kasus ini — pergeseran terjadi
+     karena `<img>` **tidak punya atribut `width`/`height`** sehingga ruang tidak terpesan sebelum
+     biner datang; dengan lazy loading, ruang justru baru terisi *lebih lambat* lagi ketika gambar
+     masuk viewport. Pemesanan ruang (`width="480" height="480"` + `aspect-ratio`), bukan penundaan
+     muat, yang memperbaikinya.
+  2. Sumber CLS terbesar bukan gambar sama sekali: `prepend` banner setelah fetch 1.800 ms
+     menggeser ±148 px seluruh konten di bawahnya, dan transisi `.kartu` memakai `margin-top`
+     (properti layout). Keduanya tidak tersentuh oleh usulan ini.
+  3. **Melanggar aturan main #4:** memindahkan banner promo ke kaki halaman menghapus keberadaan
+     banner promo yang harus tetap ada; banner juga jadi tidak terlihat sehingga fitur rusak
+     secara fungsional walaupun kodenya "masih ada".
+- **Mengapa AI bisa keliru di sini:** CLS adalah angka agregat; AI menerjemahkan "CLS tinggi" langsung
+  ke penyebab paling terkenal (gambar tanpa dimensi) dan mengaitkannya dengan solusi paling terkenal
+  (`loading="lazy"`), tanpa membedakan antara *menunda muat* dan *memesan ruang*. Untuk bagian
+  banner, menggeser konten memang menurunkan CLS secara harfiah, sehingga solusi itu terlihat benar
+  pada angka tetapi merusak fitur — jenis kesalahan yang hanya terlihat bila aturan produk dibaca.
+- **Perbaikan yang benar menurut tim:** (1) slot banner sudah ada di `index.html` sejak paint
+  pertama dan `promo.js` hanya mengisinya; (2) tinggi banner dikunci agar slot kosong dan terisi
+  identik; (3) `width="480" height="480"` + `aspect-ratio: 1` memesan ruang gambar; (4) animasi
+  kartu pindah ke `opacity` + `transform`; (5) `samakanTinggiJudul()` dihapus dan tinggi judul
+  diseragamkan CSS. Lihat `PREDIKSI.md` P-04 dan LAPORAN T-03.
 
 ---
 

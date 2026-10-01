@@ -160,6 +160,25 @@ track Scripting vs
   aritmetika, dan tetap perlu yield agar UI digambar. Dugaan Rudi #4 ("voucher sudah async jadi
   aman") **terbukti keliru di sini**: `async` tanpa I/O tidak membuka rendering opportunity.
 
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 09a5ab4
+- **Yang berubah di kode:** (1) loop `for (i < 40) simulasiCicilan(...)` dihapus — hasilnya memang
+  tidak pernah dipakai, jadi output tiap produk identik dengan sebelumnya; (2) loop produk kini
+  memotong kerja tiap ±10 ms lalu `await` `setTimeout(..., 0)` — **task**, sehingga browser sempat
+  menghitung gaya + menggambar progres dan memproses event ketik/scroll yang menumpuk;
+  (3) `style.width`/`teks.textContent` hanya ditulis saat persen berubah (maks 100×, bukan 3.000×);
+  (4) tombol voucher dinonaktifkan selama berjalan dan klik baru membatalkan lama lewat token;
+  (5) `perbaruiHargaVoucherDiKartu()` di `katalog.js` kini menempel/hapus satu `<span>` pada kartu
+  yang sudah ada, alih-alih `renderProduk()` ulang 3.000 kartu.
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.*
+- **Estimasi analitik sesudah perbaikan:** kerja per produk turun 41× (dari 41 panggilan
+  `simulasiCicilan` menjadi 1 ≈ 300 iterasi) → total ≈ 37 juta menjadi ≈ 0,9 juta iterasi. Dengan
+  potongan 10 ms, tugas terpanjang selama S4 diperkirakan **≤10–20 ms** (di bawah ambang 100 ms)
+  dan progres digambar ratusan kali selama komputasi, bukan `0%` lalu `100%` di frame yang sama.
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa pengukuran. Dugaan Rudi #4 terbukti
+  keliru dari kode: yang memperbaiki bukan kata `async`-nya, melainkan yield berbentuk task.
+
 ---
 
 ## P-03: Dua timer 10 ms membakar main thread saat pengguna diam
@@ -203,6 +222,23 @@ track Scripting vs
   tetap memicu Style+Layout+Paint tiap frame dan tetap membangunkan main thread → target S6 tetap
   gagal.
 
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 59d5d0a
+- **Yang berubah di kode:** sel `#hm-senti` dihapus dari `index.html`; `promo.js` tidak lagi
+  memuat satu pun `setInterval` (hitung mundur jadi `setTimeout` terselaraskan batas detik jam
+  dinding, hanya menulis angka yang berubah, garis lewat `transform: scaleX` tanpa sekali pun
+  membaca `offsetWidth`); teks berjalan dan denyut badge pindah sepenuhnya ke `@keyframes`
+  (`translateX`, `translateY`, `scale`, `opacity`).
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.*
+- **Estimasi analitik sesudah perbaikan:** sumber kerja tak terhindarkan saat diam turun dari
+  ~200 tugas/detik (2 timer 10 ms, masing-masing baca layout + tulis gaya) menjadi **1 tugas/detik**
+  berisi 3 penulisan teks + 1 penulisan `transform`; selebihnya animasi berjalan di compositor
+  tanpa membangunkan main thread. Ini adalah kondisi yang dituntut S6 ("aktivitas mendekati nol").
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa pengukuran; perubahan mekanismenya
+  dapat diverifikasi dari kode (tidak ada lagi `setInterval`, `offsetWidth`, `top`, atau
+  `box-shadow` yang dianimasikan di berkas yang sama).
+
 ---
 
 ## P-04: Banner yang menyusul, gambar tanpa dimensi, dan kartu yang bergeser
@@ -245,6 +281,28 @@ track Scripting vs
   (target tabel §7), karena tiga sumber utama tidak lagi menggeser konten yang sudah terlihat.
 - **Alternatif yang dipertimbangkan dan alasan tidak dipilih:** menunda `prepend` banner sampai
   pengguna berhenti menggulir — tetap menimbulkan pergeseran besar di kemudian hari, hanya
-  dipindah waktunya; memuat banner dari HTML statis — mustahil, isinya datang dari API. `loading=
+  dipindah waktunya; memuat banner dari HTML statis — mustahil, isinya datang dari API.   `loading=
   "lazy"` pada gambar juga menekan CLS, tetapi itu ranah TK-1081 dan sudah ditangani oleh
   pemesanan dimensi, jadi tidak dicampur di commit ini.
+
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 8e6b40f
+- **Yang berubah di kode:** (1) `index.html` memuat `<section class="promo-banner" id="promo-banner">`
+  sejak paint pertama (berisi "Memuat promo…"), dan `promo.js` hanya `replaceChildren` — tidak ada
+  lagi `prepend` elemen baru; (2) tinggi banner **dikunci** di CSS (`height: 200px` / `140px` ≥760px,
+  `overflow: hidden`) supaya slot kosong dan banner terisi berukuran persis sama; (3) setiap `<img>`
+  diberi `width="480" height="480"` + `aspect-ratio: 1` sehingga ruang terpesan sebelum SVG datang;
+  (4) animasi kartu pindah dari `margin-top` ke `opacity` + `transform: translateY`, dan tulisan
+  `minHeight` di `gulir.js` dihapus; (5) `samakanTinggiJudul()` dihapus, tinggi judul diseragamkan
+  CSS (`-webkit-line-clamp: 3` + `min-height: 3 baris`) sejak paint pertama.
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.* CLS sebelum perbaikan
+  (angka asli alat ukur, dari P-01): **0,423**.
+- **Estimasi analitik sesudah perbaikan:** tiga kontributor terbesar dihilangkan — banner tidak
+  lagi menyisipkan ruang (dulu ±148 px setelah 1,8 dtk), gambar tidak lagi membesarkan kartu
+  (dulu ±168 px per kartu saat biner tiba), dan baris kisi tidak lagi berubah tinggi saat kartu
+  beranimasi (dulu 16 px per baris yang masuk layar). CLS diperkirakan **≤0,1**; sisa CLS yang
+  mungkin hanya dari pembungkusan ulang `#ringkasan` bila teks hasil pencarian pindah baris.
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa pengukuran.
+- **Trade-off yang diserahkan ke LAPORAN:** tinggi banner dikunci (bisa memotong isi bila suatu
+  saat teks promo jauh lebih panjang), dan judul >3 baris kini dipotong dengan elipsis.
