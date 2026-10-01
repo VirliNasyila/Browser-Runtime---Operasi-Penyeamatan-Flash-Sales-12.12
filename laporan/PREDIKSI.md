@@ -14,9 +14,6 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
 ### Sebelum perbaikan
 
 - **Yang teramati di trace (baseline):** Widget ?ukur=1 mencatat saat mengetik "sepatu": INP 15848ms (interaksi terburuk berupa pointerdown), dengan tundaInput naik dari 6531ms→12635ms pada keystroke-keystroke berikutnya, menunjukkan antrean task menumpuk karena tiap huruf memicu kerja sinkron sebelum huruf sebelumnya selesai diproses. Long task terlama 9368ms. CLS 0.423. Total blokir 17074ms dari 2 long task.
-track Scripting vs
-  Rendering, fungsi dominan di bottom-up summary (harusnya `terapkanSaringan`/`renderProduk`/
-  `samakanTinggiJudul`)
 {
   "waktu": "2026-09-30T12:29:49.986Z",
   "jumlahLongTask": 2,
@@ -78,6 +75,10 @@ track Scripting vs
   "frameLambat": 55,
   "frameTerburuk": 17151
 }
+ Catatan: Performance panel gagal merekam/memproses trace di perangkat ini meski sudah 
+  dicoba beberapa konfigurasi (CPU 4x, tanpa screenshot, rekaman singkat). Analisis fungsi 
+  dominan di bawah berdasarkan pembacaan kode, didukung data widget di atas untuk metrik 
+  agregat (INP/CLS/long task), bukan breakdown per-fungsi dari trace visual.
 - **Dugaan mekanisme:**Event `input` pada `#kolom-cari` memicu `terapkanSaringan()` secara sinkron
   di task yang sama dengan event tersebut. Task ini memfilter+sort seluruh array produk lalu
   memanggil `renderProduk()`, yang menghapus dan membangun ulang seluruh kisi kartu. Di dalamnya,
