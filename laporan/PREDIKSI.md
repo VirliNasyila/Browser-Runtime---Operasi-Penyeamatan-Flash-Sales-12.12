@@ -111,7 +111,7 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
 ## P-06: Ribuan kartu (dan ribuan gambar) diminta render sekaligus
 
 **Tiket terkait:** TK-1081, sebagian TK-1041
-**Tanggal dan hash commit entri ini:** [ISI — isi setelah commit entri ini]
+**Tanggal dan hash commit entri ini:** 10/1/2026, 2684f45
 
 ### Sebelum perbaikan
 
@@ -163,8 +163,28 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   tugas.
 
 ### Sesudah perbaikan
+- **Hash commit perbaikan:** 2684f45
 
-- **Hash commit perbaikan:** [ISI — isi setelah kamu commit kode fix-nya]
-- **Hasil ukur (median 3 kali):** [ISI — ukur ulang pakai langkah Network tab yang sama setelah fix diterapkan]
-- **Prediksi vs kenyataan:** [ISI]
-- **Efek samping yang muncul:** [ISI]
+- **Hasil ukur (median 3 kali):** Satu kali pengukuran (Network tab, filter Img, reload,
+  diam 10 detik): request gambar turun dari 3000/3016 menjadi 8/24 — mendekati jumlah
+  kartu yang benar-benar terlihat di viewport 412x915 ditambah buffer rootMargin 600px,
+  sesuai prediksi. Waktu selesai (Finish) turun drastis dari 24,70 detik menjadi 1,92
+  detik. CLS membaik ke 0,137 (dari rentang 0-0,997 yang sangat variatif sebelumnya).
+
+  Catatan keterbatasan: baru 1x pengukuran sesudah perbaikan, belum median 3x sesuai
+  protokol (sama seperti baseline-nya). Perlu diulang 2x lagi untuk memastikan hasil
+  konsisten, terutama untuk angka CLS yang sebelumnya terbukti variatif.
+
+- **Prediksi vs kenyataan:** Prediksi bahwa jumlah request akan turun "sebanding dengan
+  kartu yang terlihat" terbukti benar (8 dari 3000, bukan lagi seluruh katalog). Prediksi
+  CLS turun ke <= 0,1 **belum sepenuhnya tercapai** — hasil 0,137 sudah jauh membaik dan
+  jauh lebih stabil dibanding sebelumnya, tapi masih sedikit di atas target. Kemungkinan
+  penyebab sisa: `min-height: calc(1.35em * 2)` di CSS judul belum presisi sama dengan
+  tinggi asli judul 2 baris pada semua ukuran font/judul, sehingga masih ada sedikit
+  pergeseran saat render. Ini belum diverifikasi lebih lanjut.
+
+- **Efek samping yang muncul:** Belum terdeteksi efek samping negatif pada fungsi scroll
+  (kartu baru tetap muncul dengan animasi saat digulir) maupun pencarian (hasil filter
+  tetap ter-render dengan staged rendering). Efek samping yang diharapkan sesuai rencana
+  (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
+  tersebar) belum diuji langsung.
