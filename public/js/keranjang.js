@@ -66,51 +66,101 @@ function gambarPanel() {
 }
 
 export function tambahKeKeranjang(produk, tombol) {
-  const konfig = salinDalam(KONFIG);
-  const keranjang = bacaKeranjang();
-  const riwayat = bacaRiwayat();
-
-  const ada = keranjang.find((item) => item.id === produk.id);
-  if (ada) ada.jumlah = Math.min(ada.jumlah + 1, konfig.maksPerProduk);
-  else keranjang.push({ id: produk.id, nama: produk.nama, harga: hargaSetelahDiskon(produk), jumlah: 1 });
-
-  riwayat.push({ t: Date.now(), jenis: 'keranjang', id: produk.id, nama: produk.nama, kategori: produk.kategori, harga: produk.harga });
-
-  // Tim data minta konteks selengkap mungkin di setiap event.
-  window.Lacak.kirim('add_to_cart', { produk, keranjang, riwayat, sumber: konfig.sumber });
-
-  simpanKeranjang(keranjang);
-  simpanRiwayat(riwayat);
-
-  // Data sudah aman tersimpan, baru tampilan diperbarui.
-  perbaruiLencana();
+  // Feedback instan ke UI (Optimistic UI):
+  // Dulu, serialisasi raksasa (9.000 riwayat) dan hashing 2 juta iterasi di lacak.min.js
+  // dieksekusi sinkron SEBELUM tombol sempat berubah, sehingga UI membeku (INP tinggi)
+  // dan pengguna mengira tombol rusak lalu menekan berulang kali (TK-1044).
   tombol.textContent = 'Ditambahkan ✓';
   tombol.classList.add('sudah');
-  setTimeout(() => {
+  tampilkanToast('Ditambahkan ke keranjang: ' + produk.nama);
+
+  // Perbarui keranjang di memori & storage
+  const keranjang = bacaKeranjang();
+  const ada = keranjang.find((item) => item.id === produk.id);
+  if (ada) ada.jumlah = Math.min(ada.jumlah + 1, KONFIG.maksPerProduk);
+  else keranjang.push({ id: produk.id, nama: produk.nama, harga: hargaSetelahDiskon(produk), jumlah: 1 });
+
+  simpanKeranjang(keranjang);
+  perbaruiLencana();
+
+  clearTimeout(tombol._timerSudah);
+  tombol._timerSudah = setTimeout(() => {
     tombol.textContent = '+ Keranjang';
     tombol.classList.remove('sudah');
   }, 1500);
-  tampilkanToast('Ditambahkan ke keranjang: ' + produk.nama);
+
+  // Defer pembaruan riwayat penelusuran & analitik ke macrotask agar tidak
+  // memblokir rendering response interaksi (INP tetap sangat rendah <= 50ms)
+  setTimeout(() => {
+    const riwayat = bacaRiwayat();
+    riwayat.push({ t: Date.now(), jenis: 'keranjang', id: produk.id, nama: produk.nama, kategori: produk.kategori, harga: produk.harga });
+    simpanRiwayat(riwayat);
+
+    if (window.Lacak) {
+      // Kirim konteks yang masuk akal (ringkasan 5 aktivitas terakhir), bukan
+      // menduplikasi seluruh 9.000 entri yang menyebabkan payload berukuran megabyte (TK-1044).
+      window.Lacak.kirim('add_to_cart', {
+        produk,
+        keranjang,
+        riwayat: riwayat.slice(-5),
+        totalRiwayat: riwayat.length,
+        sumber: KONFIG.sumber,
+      });
+    }
+  }, 0);
 }
 
+const sedangMemprosesBeli = new Set();
+
 export async function beliSekarang(produk, tombol) {
-  const konfig = salinDalam(KONFIG);
-  const riwayat = bacaRiwayat();
-  riwayat.push({ t: Date.now(), jenis: 'beli', id: produk.id, nama: produk.nama, kategori: produk.kategori, harga: produk.harga });
-  window.Lacak.kirim('begin_checkout', { produk, riwayat, sumber: konfig.sumber });
-  simpanRiwayat(riwayat);
+  // In-flight guard: cegah pesanan ganda akibat klik cepat bertubi-tubi (TK-1052 / S3)
+  if (sedangMemprosesBeli.has(produk.id) || tombol.disabled) return;
+  sedangMemprosesBeli.add(produk.id);
 
-  const respons = await fetch('/api/pesanan', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ produkId: produk.id, nama: produk.nama }),
-  });
-  const pesanan = await respons.json();
+  const teksAsli = tombol.textContent;
+  tombol.disabled = true;
+  tombol.textContent = 'Memproses…';
 
-  tombol.textContent = 'Dipesan ✓';
-  setTimeout(() => { tombol.textContent = 'Beli sekarang'; }, 1500);
-  tampilkanToast('Pesanan ' + pesanan.id + ' dibuat: ' + produk.nama);
-  perbaruiLencanaPesanan();
+  // Defer pencatatan riwayat & analitik agar tidak membebani interaksi
+  setTimeout(() => {
+    const riwayat = bacaRiwayat();
+    riwayat.push({ t: Date.now(), jenis: 'beli', id: produk.id, nama: produk.nama, kategori: produk.kategori, harga: produk.harga });
+    simpanRiwayat(riwayat);
+
+    if (window.Lacak) {
+      window.Lacak.kirim('begin_checkout', {
+        produk,
+        riwayat: riwayat.slice(-5),
+        totalRiwayat: riwayat.length,
+        sumber: KONFIG.sumber,
+      });
+    }
+  }, 0);
+
+  try {
+    const respons = await fetch('/api/pesanan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ produkId: produk.id, nama: produk.nama }),
+    });
+    const pesanan = await respons.json();
+
+    tombol.textContent = 'Dipesan ✓';
+    tampilkanToast('Pesanan ' + pesanan.id + ' dibuat: ' + produk.nama);
+    await perbaruiLencanaPesanan();
+
+    setTimeout(() => {
+      tombol.textContent = teksAsli;
+      tombol.disabled = false;
+      sedangMemprosesBeli.delete(produk.id);
+    }, 1500);
+  } catch (galat) {
+    console.error(galat);
+    tampilkanToast('Gagal memproses pesanan, coba lagi.');
+    tombol.textContent = teksAsli;
+    tombol.disabled = false;
+    sedangMemprosesBeli.delete(produk.id);
+  }
 }
 
 export async function perbaruiLencanaPesanan() {

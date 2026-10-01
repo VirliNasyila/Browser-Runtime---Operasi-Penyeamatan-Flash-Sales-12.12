@@ -123,6 +123,7 @@ button { cursor: pointer; }
 .tombol-tambah { background: var(--putih); border: 1.5px solid var(--nila); color: var(--nila); }
 .tombol-beli { background: var(--nila); border: 1.5px solid var(--nila); color: var(--putih); }
 .tombol-tambah.sudah { background: var(--hijau); border-color: var(--hijau); color: var(--putih); }
+.aksi button:disabled { opacity: .65; cursor: not-allowed; }
 
 /* Denyut badge dulu memakai top + box-shadow: keduanya properti main-thread,
    jadi ratusan badge me-repaint tiap frame walau pengguna diam. Sekarang
