@@ -391,3 +391,72 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   tetap ter-render dengan staged rendering). Efek samping yang diharapkan sesuai rencana
   (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
   tersebar) belum diuji langsung.
+
+---
+
+## P-05: Scroll patah-patah akibat listener non-passive, layout thrashing di periksaGulir, dan hashing analitik sinkron per kartu
+
+**Tiket terkait:** TK-1063
+**Tanggal entri ini:** 10/1/2026 (commit sebelum commit perbaikan)
+
+### Sebelum perbaikan
+
+- **Yang teramati (estimasi analitik, belum diukur):** Keluhan Bu Ningsih — scroll daftar barang
+  patah-patah. Perkiraan kontribusi tiap sumber saat pengguna menggulir kontinu (skenario S5, 10 detik):
+  1. `pasangGulir()` (`public/js/gulir.js:53-67`) memasang event listener `touchmove` dan `wheel`
+     dengan opsi `{ passive: false }` pada `#utama`. Pada browser mobile, listener non-passive
+     memaksa thread compositor memblokir dan menunggu main thread di setiap pergerakan sentuhan
+     (hanya untuk memeriksa `e.preventDefault()` pencegah pull-to-refresh).
+  2. `periksaGulir()` dipanggil beruntun di tiap event `scroll`, `touchmove`, dan `wheel`. Di dalamnya:
+     - `kepala.classList.toggle('melayang', y > 8)` dan `keAtas.hidden = y < 900` mengubah style/DOM.
+     - Segera setelah itu, `document.documentElement.scrollHeight` dibaca — pembacaan layout setelah
+       perubahan style/DOM memaksa perhitungan Layout sinkron (*forced synchronous layout / layout thrashing*)
+       di setiap event scroll.
+     - `bar.style.width` ditulis dengan satuan persentase — properti `width` adalah properti layout
+       dan paint, memicu siklus Layout + Paint berulang di setiap scroll tick.
+  3. `pengamatKartu` (`IntersectionObserver` dengan `rootMargin: '80px 0px'`) memanggil
+     `window.Lacak.kirim('impression', { produk: [id] })` secara sinkron untuk SETIAP kartu yang
+     memasuki viewport. Di `public/vendor/lacak.min.js`, fungsi `f()` menjalankan loop hashing sebanyak
+     **2.000.000 iterasi** (`F = 2000000`) per pemanggilan! Saat scroll kontinu, puluhan kartu masuk
+     layar dalam hitungan detik → puluhan kali 2 juta iterasi (puluhan hingga ratusan juta iterasi
+     komputasi sinkron di main thread). Pada CPU 4x slowdown, satu panggilan saja memakan puluhan ms;
+     rentetan kartu memicu banyak long task (>100 ms) dan frame lambat (>50 ms) di sela-sela scroll.
+  - **Estimasi:** frame >50 ms saat S5 jauh melebihi target (puluhan frame lambat per 10 detik)
+    dan terjadi long task >100 ms akibat loop 2 juta iterasi di `Lacak.kirim`.
+
+- **Dugaan mekanisme:** Kompositor browser terblokir oleh listener non-passive `{ passive: false }`;
+  main thread tersumbat oleh layout thrashing (`scrollHeight` setelah perubahan style) dan penulisan
+  properti layout `width` pada progress bar; serta komputasi hashing 2.000.000 iterasi di `Lacak.kirim`
+  yang ditembakkan berulang kali secara sinkron saat kartu-kartu baru terlihat saat digulir.
+
+- **Rencana perubahan:**
+  1. Ganti pencegahan pull-to-refresh berbasis JS `touchstart`/`touchmove` non-passive dengan CSS
+     `overscroll-behavior-y: contain` pada `html, body`. Hapus listener `touchmove` dan `wheel`
+     yang redundan dari `#utama`. Pasang listener `scroll` dan `resize` dengan `{ passive: true }`.
+  2. Throttle eksekusi `periksaGulir` menggunakan `requestAnimationFrame` sehingga berjalan maksimal
+     1 kali per frame animasi vsync.
+  3. Hilangkan layout thrashing: simpan (cache) `tinggiScrollMaks` dan perbarui hanya saat ukuran
+     dokumen berubah (`resize` dan saat batch produk baru ditambahkan di `segarkanGulir`), bukan di
+     setiap event scroll.
+  4. Ubah animasi `#bar-gulir` dari `width` ke properti komposit `transform: scaleX(...)` dengan
+     `transform-origin: left center` di CSS, serta guard perubahan class `melayang` dan atribut `hidden`
+     agar hanya ditulis saat status boolean benar-benar berubah.
+  5. Kumpulkan impresi kartu (`id`) ke dalam antrean batch, lalu kirim menggunakan `requestIdleCallback`
+     (dengan fallback `setTimeout`) sebagai satu batch (`{ produk: batch }`). Ini memangkas eksekusi
+     loop 2.000.000 iterasi dari N kali menjadi 1 kali per batch saat browser idle, tanpa mengganggu
+     kelancaran frame scrolling.
+
+- **Prediksi terukur (estimasi analitik, belum diukur):**
+  - Frame >50 ms selama S5 turun drastis menjadi **<= 2 per 10 detik** (memenuhi target TUGAS.md §7).
+  - Tidak ada long task >100 ms selama interaksi scroll S5 karena komputasi analitik 2 juta iterasi
+    dijalankan per-batch saat idle, dan scroll ditangani compositor secara asinkron tanpa terhalang
+    main thread.
+  - Scroll terasa mulus dan responsif di perangkat mobile/Android tanpa tersendat.
+
+- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:**
+  - Menghapus tracking impresi sama sekali: DILARANG oleh TUGAS.md Bagian 5 Aturan 1 (event
+    `impression` wajib tetap terkirim dengan informasi yang masuk akal).
+  - `requestAnimationFrame` untuk impresi analitik: tidak dipilih karena rAF tetap berjalan di
+    tahap rendering frame aktif; `requestIdleCallback` jauh lebih tepat karena memberi tahu browser
+    untuk mengeksekusinya hanya saat ada waktu luang setelah tahap rendering selesai.
+
