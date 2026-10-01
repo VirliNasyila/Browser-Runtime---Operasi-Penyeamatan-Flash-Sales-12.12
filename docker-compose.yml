@@ -1,0 +1,12 @@
+services:
+  tokokilat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tokokilat-app
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - JUMLAH_PRODUK=3000
+    restart: unless-stopped
