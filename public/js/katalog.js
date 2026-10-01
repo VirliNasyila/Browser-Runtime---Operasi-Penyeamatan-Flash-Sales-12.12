@@ -97,6 +97,16 @@ export function renderProduk(daftar) {
   periksaGulir();
 }
 
+// Menempel harga voucher ke kartu yang sudah ada, tanpa membongkar kisi.
+// renderProduk ulang (3.000 kartu + samakanTinggiJudul) adalah long task sendiri.
 export function perbaruiHargaVoucherDiKartu() {
-  renderProduk(keadaan.ditampilkan);
+  const kartu = $('#kisi').children;
+  for (let i = 0; i < kartu.length; i++) {
+    const baris = kartu[i].querySelector('.harga');
+    if (!baris) continue;
+    const lama = baris.querySelector('.harga-voucher');
+    if (lama) lama.remove();
+    const hargaVoucher = keadaan.hargaVoucher.get(Number(kartu[i].dataset.id));
+    if (hargaVoucher) baris.append(el('span', 'harga-voucher', 'Pakai voucher: ' + formatRupiah(hargaVoucher)));
+  }
 }

@@ -27,17 +27,22 @@ function simulasiCicilan(harga) {
   return terbaik;
 }
 
-// Dibuat async supaya perhitungan tidak memblokir halaman.
-async function hitungHargaPromo(produk, aturan) {
+function hitungHargaPromo(produk, aturan) {
   const dasar = hargaSetelahDiskon(produk);
   if (dasar < aturan.minBelanja) return null;
   let potongan = Math.min(Math.round((dasar * aturan.persen) / 100), aturan.maksPotongan);
   if (produk.flashSale) potongan = Math.round(potongan / 2); // flash sale hanya dapat setengah
-  let hargaAkhir = Math.max(dasar - potongan, 100);
-  for (let i = 0; i < 40; i++) simulasiCicilan(hargaAkhir + i); // cek kestabilan pembulatan
+  const hargaAkhir = Math.max(dasar - potongan, 100);
   const cicilan = simulasiCicilan(hargaAkhir);
   return { hargaAkhir, cicilan };
 }
+
+// setTimeout adalah task, bukan microtask: hanya dengan ini browser sempat
+// menghitung gaya + menggambar progres & event antre (ketik/scroll) di sela komputasi.
+const beriJeda = () => new Promise((r) => setTimeout(r, 0));
+const POTONGAN_MS = 10;
+
+let tokenBerjalan = 0;
 
 async function terapkanVoucher(kode) {
   const aturan = VOUCHER[kode];
@@ -49,25 +54,40 @@ async function terapkanVoucher(kode) {
   const progres = $('#progres');
   const isi = $('#progres-isi');
   const teks = $('#progres-teks');
+  const tombol = $('#tombol-voucher');
   progres.hidden = false;
   isi.style.width = '0%';
+  tombol.disabled = true;
+  const token = ++tokenBerjalan;
 
   const total = keadaan.semuaProduk.length;
   let selesai = 0;
+  let persenTerakhir = -1;
   keadaan.hargaVoucher.clear();
 
-  for (const produk of keadaan.semuaProduk) {
-    // await di setiap produk supaya browser sempat menggambar progress bar
-    const hasil = await hitungHargaPromo(produk, aturan);
-    if (hasil) keadaan.hargaVoucher.set(produk.id, hasil.hargaAkhir);
+  let potong = performance.now();
+  while (selesai < total) {
+    const hasil = hitungHargaPromo(keadaan.semuaProduk[selesai], aturan);
+    if (hasil) keadaan.hargaVoucher.set(keadaan.semuaProduk[selesai].id, hasil.hargaAkhir);
     selesai++;
+
     const persen = Math.round((selesai / total) * 100);
-    isi.style.width = persen + '%';
-    teks.textContent = 'Menghitung harga promo… ' + persen + '% (' + selesai + ' dari ' + total + ' produk)';
+    if (persen !== persenTerakhir) {
+      persenTerakhir = persen;
+      isi.style.width = persen + '%';
+      teks.textContent = 'Menghitung harga promo… ' + persen + '% (' + selesai + ' dari ' + total + ' produk)';
+    }
+
+    if (performance.now() - potong >= POTONGAN_MS) {
+      await beriJeda();
+      if (token !== tokenBerjalan) return; // perhitungan baru mengambil alih
+      potong = performance.now();
+    }
   }
 
   perbaruiHargaVoucherDiKartu();
   progres.hidden = true;
+  tombol.disabled = false;
   tampilkanToast('Voucher ' + kode + ' dipakai di ' + keadaan.hargaVoucher.size.toLocaleString('id-ID') + ' produk.');
   if (window.Lacak) window.Lacak.kirim('apply_voucher', { kode, jumlah: keadaan.hargaVoucher.size });
 }
