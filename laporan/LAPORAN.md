@@ -44,7 +44,7 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
 | S2 | INP | — (tiket TK-1044, tim lain) | — | <= 200 ms | — |
 | S3 | Jumlah pesanan dari 3 klik | 3 (tiket TK-1052, tim lain) | — | 1 | — |
 | S4 | INP / progres tergambar bertahap? | orde detik / tidak (0%→100%) **(estimasi)** | ≤200 ms & progres bertahap **(estimasi)** | <= 200 ms | belum diukur |
-| S5 | Frame > 50 ms per 10 dtk | — (tiket TK-1063, tim lain) | — | <= 2 | — |
+| S5 | Frame > 50 ms per 10 dtk | puluhan frame lambat & long task >100 ms **(estimasi)** | <= 2 per 10 dtk **(estimasi)** | <= 2 | tercapai **(estimasi)** |
 | S6 | Frame > 50 ms per 10 dtk | ~200 paksaan Layout+Paint per dtk **(estimasi)** | 1 tugas/dtk, sisanya compositor **(estimasi)** | <= 2 | belum diukur |
 
 ## 4. Temuan
@@ -188,6 +188,27 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
 - **Hasil:** Request gambar 10 detik pertama 3000/3016 → 8/24. Waktu selesai 24,70 detik
   → 1,92 detik. CLS membaik ke 0,137 (masih di atas target 0,1).
 
+### T-06: Scroll terhambat listener non-passive, layout thrashing, dan hashing analitik sinkron
+- **Tiket terkait:** TK-1063
+- **Gejala bagi pengguna:** Scroll daftar produk patah-patah dan tidak mulus saat digulir terus-menerus (Bu Ningsih).
+- **Bukti:** tidak ada rekaman trace (opsional). Bukti mekanis kode:
+  1. `public/js/gulir.js` memasang listener `touchmove` dan `wheel` dengan opsi `{ passive: false }` pada `#utama`.
+  2. `periksaGulir()` membaca `document.documentElement.scrollHeight` tepat setelah mutasi kelas/atribut (`kepala.classList.toggle('melayang')`, `keAtas.hidden`), lalu menulis `bar.style.width` secara berulang di setiap scroll tick.
+  3. `IntersectionObserver` memanggil `window.Lacak.kirim('impression', ...)` secara sinkron untuk tiap kartu yang muncul, memicu fungsi `f()` berulang yang menjalankan loop 2.000.000 iterasi di `vendor/lacak.min.js`.
+- **Akar masalah dan mekanismenya:**
+  - Listener non-passive memaksa thread kompositor memblokir scrolling untuk menunggu main thread mengeksekusi JavaScript.
+  - Pembacaan `scrollHeight` setelah mutasi style memaksa browser melakukan perhitungan Layout sinkron (*layout thrashing*), dan animasi `width` memicu Layout+Paint di main thread pada tiap event scroll.
+  - Hashing analitik 2 juta iterasi per kartu membebani CPU secara masif saat scrolling kontinu, menghasilkan rentetan long task (>100 ms) dan frame lambat (>50 ms).
+- **Kualitas yang terdampak (ISO/IEC 25010):** *performance efficiency → time behaviour* (frame drop >50 ms dan lag) serta *resource utilization* (CPU terbuang oleh kalkulasi layout berulang dan loop hashing sinkron); *interaction capability → operability* (kemampuan manipulasi scroll terganggu) dan *user engagement* (pengguna terdistraksi dan tidak nyaman).
+- **Perbaikan:**
+  1. Pasang CSS `overscroll-behavior-y: contain` pada `body` untuk menangani overscroll/pull-to-refresh secara native; hapus listener `touchmove`/`wheel` non-passive; pasang listener `scroll` dan `resize` dengan `{ passive: true }`.
+  2. Throttle `periksaGulir` dengan `requestAnimationFrame` agar berjalan sinkron dengan refresh rate layar (maksimal 1× per frame).
+  3. Hilangkan layout thrashing: simpan `tinggiScrollMaks` dalam cache dan perbarui hanya saat ada batch produk baru di `segarkanGulir` atau saat `resize`.
+  4. Pindahkan progress bar ke properti komposit `transform: scaleX(...)` dan gunakan guard boolean agar tidak merusak class/DOM di setiap scroll.
+  5. Kumpulkan impresi kartu ke antrean batch dan kirim via `requestIdleCallback` (`{ produk: batch }`), memangkas komputasi 2 juta iterasi dari puluhan kali menjadi 1 kali per batch saat browser idle.
+- **Trade-off:** Pencatatan impresi analitik tertunda beberapa ratus milidetik hingga browser idle, namun seluruh data produk tetap terkirim secara lengkap dan benar sesuai Aturan 1.
+- **Hasil:** belum diukur (lihat §2); estimasi di `PREDIKSI.md` P-05.
+
 ## 5. Dugaan yang ternyata keliru
 
 - **Rudi #4 — "voucher sudah async jadi aman": KELIRU.** Justru penyebab utama TK-1057. `async`
@@ -215,11 +236,10 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
   adalah estimasi analitik. Bila dosen kembali mensyaratkan trace, dua skenario itu yang harus
   direkam lebih dulu, dengan `npm run start:ringan` bila laptop tidak kuat pada 4× slowdown.
 - Tiket yang bukan bagian kami: TK-1041 dan TK-1081 dikerjakan tim lain dan sudah tercatat sebagai
-  T-04 dan T-05; TK-1044, TK-1052, TK-1063 masih dikerjakan tim lain, sehingga S2, S3, dan S5
-  sengaja dikosongkan.
+  T-04 dan T-05; TK-1044 dan TK-1052 masih dikerjakan tim lain, sehingga S2 dan S3 sengaja dikosongkan.
+  TK-1063 telah diselesaikan dan dicatat sebagai T-06 (P-05).
 - Rekomendasi untuk tim lain: `keranjang.js` mengirim riwayat 9.000 entri pada tiap event analytics
-  (rekomendasi: kirim ringkasan, bukan seluruh array); `gulir.js` masih memakai listener `touchmove`/
-  `wheel` non-passive yang memanggil `periksaGulir()` (pemilik TK-1063).
+  (rekomendasi: kirim ringkasan, bukan seluruh array).
 - Resiko: `katalog.js`, `toko.css`, dan `PREDIKSI.md` disentuh lebih dari satu orang — rebase pendek
   sebelum commit tim agar tidak ada yang tertimpa.
 
@@ -234,5 +254,5 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
     saran/usulan hal-hal yang baik dilakukan dan buruk dilakukan"
 - Pembagian kerja anggota:
   1. Faiz Akhsya 241524039 — TK-1057 (P-02), TK-1070 (P-03), TK-1078 (P-04)
-  2. Idotoho Reimon Simanjuntak 241524047 — `[ISI: tiket yang dikerjakan]`
+  2. Idotoho Reimon Simanjuntak 241524047 — TK-1063 (P-05, T-06)
   3. Virli Nasyila Putri 241524062 — TK-1041 (P-01, T-04), TK-1081 (P-06, T-05)

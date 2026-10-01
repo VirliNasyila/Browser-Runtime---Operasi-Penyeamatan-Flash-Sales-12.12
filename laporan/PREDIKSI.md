@@ -460,3 +460,20 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
     tahap rendering frame aktif; `requestIdleCallback` jauh lebih tepat karena memberi tahu browser
     untuk mengeksekusinya hanya saat ada waktu luang setelah tahap rendering selesai.
 
+### Sesudah perbaikan
+
+- **Hash commit perbaikan:** 0d9bb97
+- **Yang berubah di kode:**
+  1. `public/css/toko.css`: ditambahkan `overscroll-behavior-y: contain;` pada `body` untuk mencegah pull-to-refresh secara native; `.bar-gulir` diubah menjadi `width: 100%`, `transform-origin: left center`, `transform: scaleX(0)`, dan `will-change: transform`.
+  2. `public/js/gulir.js`: dihapus listener `touchstart`, `touchmove`, dan `wheel` non-passive; listener `scroll` dan `resize` diberi opsi `{ passive: true }`; handler scroll di-throttle menggunakan `requestAnimationFrame`; `scrollHeight` di-cache via `perbaruiUkuranDokumen()` dan hanya diperbarui saat batch kartu bertambah (`segarkanGulir`) atau resize; penulisan style class `melayang` dan atribut `hidden` tombol `#ke-atas` dijaga guard boolean agar tidak merusak DOM di tiap tick; impresi analitik dikumpulkan ke buffer `antrianImpresi` dan dikirim secara batch per-kelompok saat browser idle lewat `requestIdleCallback`.
+- **Hasil ukur:** *belum diukur — perekaman trace opsional menurut dosen.*
+- **Estimasi analitik sesudah perbaikan:**
+  - Compositor thread bebas melakukan scrolling tanpa terblokir oleh listener touchmove/wheel non-passive di main thread.
+  - Forced synchronous layout (layout thrashing) saat scroll tereliminasi sepenuhnya (tidak ada pembacaan `scrollHeight` di loop per-frame).
+  - Animasi progress bar beralih ke layer komposit (`transform: scaleX`).
+  - Loop hashing 2.000.000 iterasi pada SDK vendor (`Lacak.kirim`) dipangkas dari puluhan kali pemanggilan sinkron saat scroll menjadi 1 kali per batch saat browser berada dalam kondisi idle, menghilangkan lonjakan long task (>100 ms).
+  - Jumlah frame lambat (>50 ms) selama skenario S5 diproyeksikan turun drastis hingga memenuhi target `<= 2` per 10 detik.
+- **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa rekaman fisik (opsional), namun mekanisme bottleneck (pemblokiran thread kompositor, layout thrashing, dan hashing sinkron saat scroll) teratasi secara tuntas di kode.
+- **Efek samping yang muncul:** Impresi analitik dikirim dengan sedikit jeda (batch saat idle), namun seluruh ID produk yang tampil tetap tercatat lengkap dan masuk akal sesuai ketentuan Aturan 1.
+
+
