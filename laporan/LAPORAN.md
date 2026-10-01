@@ -18,26 +18,27 @@ seluruh halaman sehingga sasaran klik bergeser ke iklan. Perbaikannya: memberi j
 sejati, memindahkan semua animasi ke compositor, dan memesan ruang sejak paint pertama. Tiga
 perbaikan ini dikerjakan di commit terpisah dengan hipotesis yang di-commit lebih dulu
 (`laporan/PREDIKSI.md`). Karena perekaman trace opsional menurut dosen, angka di bawah adalah
-estimasi analitik kecuali baris S1 yang berasal dari alat ukur.
+estimasi analitik kecuali baris S0 dan S1 yang berasal dari alat ukur serta pengukuran Network
+tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka terukur.
 
 ## 2. Lingkungan pengukuran
-
-- Spesifikasi laptop: `[ISI: mis. Ryzen 5 xxxx / 16 GB / Windows 11]`
-- Chrome: `[ISI: versi, mis. 140 stable]`
-- Jumlah produk: `npm start` → **3.000 produk** (default `JUMLAH_PRODUK`)
+- Laptop: Virli Nasyila Putri — AMD Ryzen 5 5500U with Radeon Graphics
+- Chrome: Virli Nasyila Putri — 154.0.8037.92 (Official Build) (64-bit) (cohort: 154.0.8037.92 Rollout)
+- Jumlah produk: `npm start` → **3.000 produk** (default `JUMLAH_PRODUK`, bukan varian `start:ringan`)
 - Throttling: CPU 4x slowdown, viewport 412×915, tanpa throttling jaringan (protokol TUGAS.md §7)
 - **Penyimpangan dari protokol:** perekaman panel Performance **tidak dilakukan** — menurut dosen
   perekaman trace bersifat opsional. Karena itu:
   - baris **S1** memakai angka nyata dari alat ukur `?ukur=1` (tercatat di `PREDIKSI.md` P-01);
+  - baris **S0** memakai angka nyata dari pengukuran Network tab (`PREDIKSI.md` P-06);
   - baris lain diestimasi dari mekanisme kode dan diberi tanda **(estimasi)**;
-  - bukti trace untuk S0/S4/S6 tidak tersedia.
+  - bukti trace untuk S4/S6 tidak tersedia.
 
 ## 3. Hasil sebelum dan sesudah
 
 | Skenario | Metrik | Sebelum (median) | Sesudah (median) | Target | Tercapai? |
 |---|---|---|---|---|---|
-| S0 | CLS | 0,423 (alat ukur, via P-01) **(estimasi sisa: ≤0,1)** | ≤0,1 **(estimasi)** | <= 0,1 | belum diukur |
-| S0 | Jumlah permintaan gambar dalam 10 dtk pertama | ribuan (semua `<img>` langsung `src`) | — (TK-1081, tim lain) | sebanding dengan yang terlihat | di luar tiket ini |
+| S0 | CLS | 0,423 saat mengetik (alat ukur, P-01); 0–0,997 saat reload (P-06) | 0,059 (P-01); 0,137 (P-06) | <= 0,1 | sebagian (0,059 ya; 0,137 belum) |
+| S0 | Jumlah permintaan gambar dalam 10 dtk pertama | 3000/3016 (P-06) | 8/24 (P-06) | sebanding dengan yang terlihat | **ya** |
 | S1 | INP | **15.848 ms** (alat ukur) | **48 ms** (alat ukur) | <= 200 ms | **ya** |
 | S1 | Long task terlama | **9.368 ms** (alat ukur) | **0 ms** (alat ukur) | <= 100 ms | **ya** |
 | S2 | INP | — (tiket TK-1044, tim lain) | — | <= 200 ms | — |
@@ -137,6 +138,56 @@ estimasi analitik kecuali baris S1 yang berasal dari alat ukur.
   dan semua kartu berukuran 3 baris tinggi judul (sebelumnya tinggi maksimum dari 24 sampel).
 - **Hasil:** belum diukur (lihat §2); estimasi di `PREDIKSI.md` P-04.
 
+### T-04: Pencarian membekukan halaman di tiap huruf yang diketik
+
+- **Tiket terkait:** TK-1041
+- **Gejala bagi pengguna:** Mengetik di kolom pencarian terasa macet/hang; huruf-huruf
+  seperti tertahan, hasil baru muncul setelah jeda lama.
+- **Bukti:** Data widget `?ukur=1` sebelum/sesudah (lihat PREDIKSI.md P-01) — INP turun
+  dari 15.848ms ke 48ms. [Catatan: flame chart Performance panel tidak berhasil
+  direkam di perangkat ini untuk kasus ini — lihat bagian 2 "Penyimpangan dari protokol".]
+- **Akar masalah dan mekanismenya:** Event `input` pada `#kolom-cari` memicu
+  `terapkanSaringan()` secara sinkron di task yang sama, yang memanggil `renderProduk()`
+  membangun ulang seluruh kisi kartu. Di dalamnya, `samakanTinggiJudul()` melakukan pola
+  baca-tulis (`offsetHeight` lalu `style.height`) berulang di dalam loop, memaksa browser
+  menjalankan tahap Layout berkali-kali secara sinkron ("layout thrashing") dalam satu
+  task tanpa titik yield — input berikutnya menumpuk di antrean sampai task selesai.
+- **Kualitas yang terdampak (ISO/IEC 25010):** Performance efficiency (time behaviour —
+  task berdurasi puluhan detik; resource utilization — Layout dihitung berulang tanpa
+  perlu). Interaction capability (operability — input tidak responsif selama task
+  berjalan).
+- **Perbaikan:** (1) Debounce 180ms pada `terapkanSaringan`. (2) Ganti `samakanTinggiJudul`
+  dengan `-webkit-line-clamp` di CSS. (3) Pecah render jadi bertahap per 60 kartu lewat
+  IntersectionObserver.
+- **Trade-off:** Hasil pencarian terasa tertunda ~180ms (disengaja). Kartu di bagian bawah
+  daftar besar baru muncul saat digulir, bukan seketika. Alternatif Web Worker tidak
+  dipilih karena kompleksitas serialisasi lebih besar dari manfaatnya.
+- **Hasil:** INP 15.848ms → 48ms. Long task terlama 9.368ms → 0ms. CLS 0,423 → 0,059.
+
+### T-05: Ribuan gambar diminta sekaligus meski baru sebagian terlihat
+
+- **Tiket terkait:** TK-1081
+- **Gejala bagi pengguna:** Halaman terasa lambat/berat dimuat, gambar produk muncul
+  bertahap lama, kemungkinan boros kuota data pada koneksi terbatas.
+- **Bukti:** Network tab (filter Img) sebelum/sesudah — screenshot jumlah request dan
+  waktu selesai (lihat PREDIKSI.md P-06).
+- **Akar masalah dan mekanismenya:** `buatKartu()` mengisi `gambar.src` langsung tanpa
+  `loading="lazy"`, dan `renderProduk()` memanggil `buatKartu()` untuk SELURUH hasil
+  filter dalam satu loop sinkron — browser menembak request untuk semua gambar sekaligus
+  tanpa peduli posisi viewport. Tanpa `width`/`height`, ruang gambar juga tidak
+  tercadang sebelum gambar dimuat, berkontribusi ke CLS yang variatif.
+- **Kualitas yang terdampak (ISO/IEC 25010):** Performance efficiency (resource
+  utilization — bandwidth terbuang untuk gambar di luar layar; time behaviour — waktu
+  selesai muat 24,70 detik). Interaction capability (user engagement — gambar lambat
+  muncul menurunkan kenyamanan; inclusivity — berat untuk koneksi/perangkat terbatas).
+- **Perbaikan:** Tambah `loading="lazy" decoding="async" width height` pada `<img>`,
+  dan pecah `renderProduk()` jadi render bertahap per 60 kartu via IntersectionObserver.
+- **Trade-off:** Total waktu memuat SEMUA gambar (bila di-scroll habis) kurang lebih
+  sama, hanya tersebar mengikuti kecepatan scroll, bukan menumpuk di awal. Pagination
+  dipertimbangkan tapi tidak dipilih karena mengubah cara pengguna menjangkau produk.
+- **Hasil:** Request gambar 10 detik pertama 3000/3016 → 8/24. Waktu selesai 24,70 detik
+  → 1,92 detik. CLS membaik ke 0,137 (masih di atas target 0,1).
+
 ## 5. Dugaan yang ternyata keliru
 
 - **Rudi #4 — "voucher sudah async jadi aman": KELIRU.** Justru penyebab utama TK-1057. `async`
@@ -160,26 +211,28 @@ estimasi analitik kecuali baris S1 yang berasal dari alat ukur.
 
 ## 6. Yang belum beres dan rekomendasi
 
-- Pengukuran S0/S4/S6 belum dilakukan (perekaman opsional) — angka pada tabel §3 selain S1 adalah
-  estimasi analitik. Bila dosen kembali mensyaratkan trace, tiga skenario itu yang harus direkam
-  lebih dulu, dengan `npm run start:ringan` bila laptop tidak kuat pada 4× slowdown.
-- Tiket yang bukan bagian kami (TK-1041 selain debounce, TK-1044, TK-1052, TK-1063, TK-1081) masih
-  dikerjakan tim lain; S2, S3, S5 dan baris gambar S0 sengaja dikosongkan.
+- Pengukuran S4/S6 belum dilakukan (perekaman opsional) — angka pada tabel §3 selain S0 dan S1
+  adalah estimasi analitik. Bila dosen kembali mensyaratkan trace, dua skenario itu yang harus
+  direkam lebih dulu, dengan `npm run start:ringan` bila laptop tidak kuat pada 4× slowdown.
+- Tiket yang bukan bagian kami: TK-1041 dan TK-1081 dikerjakan tim lain dan sudah tercatat sebagai
+  T-04 dan T-05; TK-1044, TK-1052, TK-1063 masih dikerjakan tim lain, sehingga S2, S3, dan S5
+  sengaja dikosongkan.
 - Rekomendasi untuk tim lain: `keranjang.js` mengirim riwayat 9.000 entri pada tiap event analytics
   (rekomendasi: kirim ringkasan, bukan seluruh array); `gulir.js` masih memakai listener `touchmove`/
-  `wheel` non-passive yang memanggil `periksaGulir()` (pemilik TK-1063); semua gambar masih dimuat
-  sekaligus tanpa `loading="lazy"` (pemilik TK-1081).
+  `wheel` non-passive yang memanggil `periksaGulir()` (pemilik TK-1063).
 - Resiko: `katalog.js`, `toko.css`, dan `PREDIKSI.md` disentuh lebih dari satu orang — rebase pendek
   sebelum commit tim agar tidak ada yang tertimpa.
 
 ## 7. Pernyataan penggunaan AI dan pembagian kerja
-
 - Alat AI yang dipakai: **opencode (agent coding, model mimo-v2.6-flash)** untuk analisis akar
   masalah dari kode, penulisan hipotesis di `PREDIKSI.md`, implementasi tiga perbaikan, dan penyusunan
   laporan. Nama AI, prompt, serta analisis kelemahan usulannya dicatat di `laporan/AUDIT-AI.md`
-  (A-01 milik tim, A-02 dan A-03 milik tiket ini). Angka pengukuran **tidak** dihasilkan AI — S1 dari
-  alat ukur, sisanya estimasi berlabel sesuai §2.
+  (A-01 milik tim, A-02 dan A-03 milik tiket ini). Angka pengukuran **tidak** dihasilkan AI — S0 dan
+  S1 dari alat ukur, sisanya estimasi berlabel sesuai §2.
+- Pertanyaan yang diajukan ke AI:
+  - Virli Nasyila Putri: "Berikan gambaran untuk mengerjakan tugas web ini, dan juga berikan
+    saran/usulan hal-hal yang baik dilakukan dan buruk dilakukan"
 - Pembagian kerja anggota:
-  1. Faiz Akhsya 241524039 — `[ISI]`
-  2. Idotoho Reimon Simanjuntak 241524047 — `[ISI]`
-  3. Virli Nasyila Putri 241524062 — `[ISI]`
+  1. Faiz Akhsya 241524039 — TK-1057 (P-02), TK-1070 (P-03), TK-1078 (P-04)
+  2. Idotoho Reimon Simanjuntak 241524047 — `[ISI: tiket yang dikerjakan]`
+  3. Virli Nasyila Putri 241524062 — TK-1041 (P-01, T-04), TK-1081 (P-06, T-05)

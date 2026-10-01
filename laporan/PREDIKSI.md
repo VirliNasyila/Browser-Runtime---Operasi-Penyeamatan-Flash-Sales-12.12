@@ -6,17 +6,14 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
 
 ---
 
-## P-01: [judul singkat masalah]
+## P-01: [Pencarian memblokir main thread di tiap keystroke]
 
 **Tiket terkait:** TK-1041
-**Tanggal dan hash commit entri ini:** 9/30/2026
+**Tanggal dan hash commit entri ini:** 9/30/2026,  dae4aa6
 
 ### Sebelum perbaikan
 
 - **Yang teramati di trace (baseline):** Widget ?ukur=1 mencatat saat mengetik "sepatu": INP 15848ms (interaksi terburuk berupa pointerdown), dengan tundaInput naik dari 6531ms→12635ms pada keystroke-keystroke berikutnya, menunjukkan antrean task menumpuk karena tiap huruf memicu kerja sinkron sebelum huruf sebelumnya selesai diproses. Long task terlama 9368ms. CLS 0.423. Total blokir 17074ms dari 2 long task.
-track Scripting vs
-  Rendering, fungsi dominan di bottom-up summary (harusnya `terapkanSaringan`/`renderProduk`/
-  `samakanTinggiJudul`)
 {
   "waktu": "2026-09-30T12:29:49.986Z",
   "jumlahLongTask": 2,
@@ -78,6 +75,10 @@ track Scripting vs
   "frameLambat": 55,
   "frameTerburuk": 17151
 }
+ Catatan: Performance panel gagal merekam/memproses trace di perangkat ini meski sudah 
+  dicoba beberapa konfigurasi (CPU 4x, tanpa screenshot, rekaman singkat). Analisis fungsi 
+  dominan di bawah berdasarkan pembacaan kode, didukung data widget di atas untuk metrik 
+  agregat (INP/CLS/long task), bukan breakdown per-fungsi dari trace visual.
 - **Dugaan mekanisme:**Event `input` pada `#kolom-cari` memicu `terapkanSaringan()` secara sinkron
   di task yang sama dengan event tersebut. Task ini memfilter+sort seluruh array produk lalu
   memanggil `renderProduk()`, yang menghapus dan membangun ulang seluruh kisi kartu. Di dalamnya,
@@ -107,9 +108,10 @@ track Scripting vs
 - **Efek samping yang muncul:** Sesuai desain, pembaruan hasil pencarian terasa memiliki jeda sekitar 180ms karena debounce, namun UI browser tidak lagi hang/freeze sama sekali saat pengguna mengetik cepat. Kartu produk tambahan di bawah hanya akan muncul ketika layar digulir. Efek samping positif lainnya adalah layout halaman menjadi jauh lebih stabil (penurunan nilai CLS) karena tinggi elemen kini ditangani langsung oleh CSS (-webkit-line-clamp) sejak awal paint.
 
 > **Catatan pengukuran:** perekaman trace DevTools bersifat **opsional menurut dosen**. Angka pada
-> entri P-01 berasal dari alat ukur `?ukur=1` (pengukuran nyata). Seluruh angka pada entri P-02,
-> P-03, dan P-04 adalah **estimasi analitik yang belum diukur**, dihitung dari mekanisme kode
-> (jumlah produk × iterasi × sifat antrean tugas), bukan hasil rekaman.
+> entri P-01 berasal dari alat ukur `?ukur=1` (pengukuran nyata), angka pada entri P-06 dari
+> pengukuran Network tab. Seluruh angka pada entri P-02, P-03, dan P-04 adalah **estimasi analitik
+> yang belum diukur**, dihitung dari mekanisme kode (jumlah produk × iterasi × sifat antrean
+> tugas), bukan hasil rekaman.
 
 ---
 
@@ -306,3 +308,86 @@ track Scripting vs
 - **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa pengukuran.
 - **Trade-off yang diserahkan ke LAPORAN:** tinggi banner dikunci (bisa memotong isi bila suatu
   saat teks promo jauh lebih panjang), dan judul >3 baris kini dipotong dengan elipsis.
+
+---
+
+## P-06: Ribuan kartu (dan ribuan gambar) diminta render sekaligus
+
+**Tiket terkait:** TK-1081, sebagian TK-1041
+**Tanggal dan hash commit entri ini:** 10/1/2026, 2684f45
+
+### Sebelum perbaikan
+
+- **Yang teramati di trace (baseline):** Network tab (filter Img), reload lalu diam ~10 detik:
+  3000 dari 3016 total request adalah gambar produk (setiap produk sekaligus, bukan hanya
+  yang terlihat). Load event baru selesai di 24,70 detik; beberapa file individual
+  menunggu 16-17 detik karena mengantre (browser membatasi jumlah koneksi paralel per
+  domain). Total transferred bervariasi antar percobaan: 1.389 kB pada reload pertama,
+  3.306 kB pada reload kedua (indikasi hasil sensitif terhadap cache/kondisi jaringan
+  simulasi, bukan sekadar sekali ukur). Viewport 412x915 tanpa scroll hanya menampilkan
+  kira-kira 2-4 kartu utuh (estimasi dari screenshot, belum dihitung presisi karena
+  tertutup widget pengukur) dari 3000 yang di-request sekaligus. CLS turut tercatat sangat
+  bervariasi antar reload: 0 pada satu percobaan, 0,997 pada percobaan lain.
+
+  Catatan keterbatasan: angka di atas baru dari 2 kali reload, belum median 3x sesuai
+  protokol, dan jumlah kartu terlihat belum dihitung presisi. Variasi CLS yang besar
+  (0 vs 0,997) sendiri konsisten dengan dugaan mekanisme di bawah -- CLS bergantung pada
+  urutan/waktu gambar mana yang kebetulan selesai dimuat sebelum pengguna sempat
+  berinteraksi.
+
+- **Dugaan mekanisme:** Di `buatKartu()` (katalog.js), `gambar.src = produk.gambar` diset
+  langsung untuk tiap produk begitu elemen `<img>` dibuat, tanpa atribut `loading="lazy"`
+  atau `decoding="async"`. `renderProduk()` memanggil `buatKartu()` untuk SELURUH `daftar`
+  hasil filter dalam satu loop synchronous, sehingga begitu `innerHTML` kisi dibangun,
+  browser langsung menembak request untuk seluruh gambar sekaligus -- terlepas dari
+  apakah kartu tersebut berada di viewport atau jauh di luar layar. Karena `<img>` juga
+  tidak punya atribut `width`/`height`, browser tidak bisa mencadangkan ruang sebelum
+  gambar selesai dimuat, sehingga urutan kedatangan gambar (yang acak tergantung antrean
+  network) menyebabkan elemen-elemen bergeser saat gambar muncul belakangan -- ini
+  menjelaskan variasi CLS yang besar antar percobaan.
+
+- **Rencana perubahan:** (1) Tambah `loading="lazy" decoding="async"` serta
+  `width="480" height="480"` (ukuran asli gambar dari server) pada tiap `<img>` di
+  `buatKartu()`. (2) Pecah `renderProduk()` jadi render bertahap per 60 kartu, dipicu
+  `IntersectionObserver` pada penanda di ujung kisi, supaya DOM node (dan trigger
+  lazy-load) untuk kartu jauh di bawah tidak dibuat sampai pengguna benar-benar
+  menggulir mendekat.
+
+- **Prediksi terukur:** Jumlah request gambar dalam 10 detik pertama turun mendekati
+  jumlah kartu yang benar-benar terlihat di viewport (bukan 3000 sekaligus). CLS pada S0
+  turun ke <= 0,1 dan konsisten antar percobaan (varians besar yang teramati di baseline
+  hilang), karena ruang gambar sudah dicadangkan lewat `width`/`height` sebelum gambar
+  selesai dimuat. Efek samping: total waktu memuat SEMUA gambar (jika pengguna scroll
+  sampai habis) kurang lebih sama, hanya tersebar mengikuti kecepatan scroll.
+
+- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:** Pagination bernomor
+  halaman -- tidak dipilih karena mengubah cara pengguna menjangkau produk (klik vs
+  scroll), sementara produk tetap harus bisa dijangkau dengan menggulir sesuai aturan
+  tugas.
+
+### Sesudah perbaikan
+- **Hash commit perbaikan:** 2684f45
+
+- **Hasil ukur (median 3 kali):** Satu kali pengukuran (Network tab, filter Img, reload,
+  diam 10 detik): request gambar turun dari 3000/3016 menjadi 8/24 — mendekati jumlah
+  kartu yang benar-benar terlihat di viewport 412x915 ditambah buffer rootMargin 600px,
+  sesuai prediksi. Waktu selesai (Finish) turun drastis dari 24,70 detik menjadi 1,92
+  detik. CLS membaik ke 0,137 (dari rentang 0-0,997 yang sangat variatif sebelumnya).
+
+  Catatan keterbatasan: baru 1x pengukuran sesudah perbaikan, belum median 3x sesuai
+  protokol (sama seperti baseline-nya). Perlu diulang 2x lagi untuk memastikan hasil
+  konsisten, terutama untuk angka CLS yang sebelumnya terbukti variatif.
+
+- **Prediksi vs kenyataan:** Prediksi bahwa jumlah request akan turun "sebanding dengan
+  kartu yang terlihat" terbukti benar (8 dari 3000, bukan lagi seluruh katalog). Prediksi
+  CLS turun ke <= 0,1 **belum sepenuhnya tercapai** — hasil 0,137 sudah jauh membaik dan
+  jauh lebih stabil dibanding sebelumnya, tapi masih sedikit di atas target. Kemungkinan
+  penyebab sisa: `min-height: calc(1.35em * 2)` di CSS judul belum presisi sama dengan
+  tinggi asli judul 2 baris pada semua ukuran font/judul, sehingga masih ada sedikit
+  pergeseran saat render. Ini belum diverifikasi lebih lanjut.
+
+- **Efek samping yang muncul:** Belum terdeteksi efek samping negatif pada fungsi scroll
+  (kartu baru tetap muncul dengan animasi saat digulir) maupun pencarian (hasil filter
+  tetap ter-render dengan staged rendering). Efek samping yang diharapkan sesuai rencana
+  (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
+  tersebar) belum diuji langsung.

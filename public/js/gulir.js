@@ -5,6 +5,31 @@ import { $ } from './util.js';
 
 const sudahTercatat = new Set();
 
+// Animasi "muncul" + pencatatan impresi pindah dari periksaGulir() ke
+// IntersectionObserver ini (katalog.js memanggil amatiKartu() untuk tiap kartu
+// baru karena kartu kini dirender bertahap). Dulu keduanya dijalankan di tiap
+// event scroll lewat querySelectorAll + getBoundingClientRect.
+// Tulisan minHeight dihapus bersama perubahan animasi kartu ke transform (TK-1078):
+// margin-top yang dulu ditanjam tak dipakai lagi, jadi tidak ada yang perlu
+// ditambal, dan observer ini jadi bebas tulis layout sama sekali.
+const pengamatKartu = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    const kartu = entry.target;
+    kartu.classList.add('terlihat');
+    const id = kartu.dataset.id;
+    if (!sudahTercatat.has(id)) {
+      sudahTercatat.add(id);
+      if (window.Lacak) window.Lacak.kirim('impression', { produk: [id] });
+    }
+    pengamatKartu.unobserve(kartu);
+  }
+}, { rootMargin: '80px 0px' });
+
+export function amatiKartu(kartu) {
+  pengamatKartu.observe(kartu);
+}
+
 export function periksaGulir() {
   const kepala = $('#kepala');
   const bar = $('#bar-gulir');
@@ -16,26 +41,14 @@ export function periksaGulir() {
 
   const tinggiDokumen = document.documentElement.scrollHeight - window.innerHeight;
   bar.style.width = (tinggiDokumen > 0 ? (y / tinggiDokumen) * 100 : 0) + '%';
-
-  // Kartu yang masuk layar dimunculkan dengan animasi, dan dicatat sebagai impresi.
-  const tinggiLayar = window.innerHeight;
-  const impresiBaru = [];
-  document.querySelectorAll('.kartu').forEach((kartu) => {
-    const kotak = kartu.getBoundingClientRect();
-    const masukLayar = kotak.top < tinggiLayar + 80 && kotak.bottom > -80;
-    if (masukLayar && !kartu.classList.contains('terlihat')) {
-      kartu.classList.add('terlihat');
-      // dulu baris ini menulis minHeight setiap kali kartu masuk layar -> tulis
-      // layout saat scroll. Tidak perlu lagi: animasi kartu kini memakai transform.
-    }
-    if (masukLayar && !sudahTercatat.has(kartu.dataset.id)) {
-      sudahTercatat.add(kartu.dataset.id);
-      impresiBaru.push(kartu.dataset.id);
-    }
-  });
-
-  if (impresiBaru.length && window.Lacak) window.Lacak.kirim('impression', { produk: impresiBaru });
 }
+
+// Alias saja supaya import { segarkanGulir } di katalog.js (TK-1081) tidak
+// pecah. Ini TIDAK menambah throttling/IntersectionObserver untuk bagian
+// header/bar/tombol-ke-atas -- periksaGulir tetap berjalan langsung di tiap
+// event scroll seperti semula, karena membenahi itu di luar scope TK-1081
+// (lihat TK-1063 untuk perbaikan sesungguhnya pada bagian ini).
+export const segarkanGulir = periksaGulir;
 
 export function pasangGulir() {
   window.addEventListener('scroll', periksaGulir);
