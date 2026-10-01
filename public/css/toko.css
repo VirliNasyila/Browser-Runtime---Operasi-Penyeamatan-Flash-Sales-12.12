@@ -15,7 +15,7 @@
 
 * { box-sizing: border-box; }
 html { scroll-behavior: smooth; }
-body { margin: 0; font: 15px/1.45 var(--huruf); color: var(--tinta); background: var(--kabut); }
+body { margin: 0; font: 15px/1.45 var(--huruf); color: var(--tinta); background: var(--kabut); overscroll-behavior-y: contain; }
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 3px solid var(--kilat); outline-offset: 2px; }
@@ -35,7 +35,8 @@ button { cursor: pointer; }
 .tombol-kepala { background: transparent; border: 1.5px solid rgba(255, 255, 255, .45); color: var(--putih); padding: 8px 12px; border-radius: 8px; }
 .tombol-kepala:hover { border-color: var(--kilat); }
 .tombol-kepala b { display: inline-block; min-width: 22px; margin-left: 4px; padding: 0 6px; border-radius: 99px; background: var(--kilat); color: var(--tinta); text-align: center; }
-.bar-gulir { height: 3px; width: 0; background: var(--kilat); }
+/* Progress bar memakai transform: scaleX, bukan width, agar animasi berjalan di compositor tanpa memicu layout sinkron (TK-1063) */
+.bar-gulir { height: 3px; width: 100%; background: var(--kilat); transform-origin: left center; transform: scaleX(0); will-change: transform; }
 
 /* ---------- strip flash sale ---------- */
 .kilat { background: var(--kilat); color: var(--tinta); overflow: hidden; }

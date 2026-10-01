@@ -4,66 +4,116 @@
 import { $ } from './util.js';
 
 const sudahTercatat = new Set();
+let antrianImpresi = [];
+let idIdleImpresi = null;
 
-// Animasi "muncul" + pencatatan impresi pindah dari periksaGulir() ke
-// IntersectionObserver ini (katalog.js memanggil amatiKartu() untuk tiap kartu
-// baru karena kartu kini dirender bertahap). Dulu keduanya dijalankan di tiap
-// event scroll lewat querySelectorAll + getBoundingClientRect.
-// Tulisan minHeight dihapus bersama perubahan animasi kartu ke transform (TK-1078):
-// margin-top yang dulu ditanjam tak dipakai lagi, jadi tidak ada yang perlu
-// ditambal, dan observer ini jadi bebas tulis layout sama sekali.
+// Mengirim analitik impresi secara batch lewat requestIdleCallback (TK-1063):
+// SDK vendor (lacak.min.js) mengeksekusi loop hashing f() sebanyak 2.000.000
+// iterasi per panggilan kirim. Bila dipanggil sinkron per kartu saat scroll,
+// main thread mengalami rentetan long task (>100ms) dan frame drop (>50ms).
+// Dengan batching dan idle dispatch, 2 juta iterasi hanya dieksekusi 1 kali
+// per batch saat browser idle, tanpa mengganggu rendering frame scroll.
+function jadwalkanKirimImpresi() {
+  if (idIdleImpresi != null) return;
+  const proses = () => {
+    idIdleImpresi = null;
+    if (antrianImpresi.length === 0 || !window.Lacak) return;
+    const batch = antrianImpresi.splice(0, antrianImpresi.length);
+    window.Lacak.kirim('impression', { produk: batch });
+  };
+  if (typeof window.requestIdleCallback === 'function') {
+    idIdleImpresi = window.requestIdleCallback(proses, { timeout: 1000 });
+  } else {
+    idIdleImpresi = setTimeout(proses, 200);
+  }
+}
+
 const pengamatKartu = new IntersectionObserver((entries) => {
+  let adaBaru = false;
   for (const entry of entries) {
     if (!entry.isIntersecting) continue;
     const kartu = entry.target;
     kartu.classList.add('terlihat');
     const id = kartu.dataset.id;
-    if (!sudahTercatat.has(id)) {
+    if (id && !sudahTercatat.has(id)) {
       sudahTercatat.add(id);
-      if (window.Lacak) window.Lacak.kirim('impression', { produk: [id] });
+      antrianImpresi.push(id);
+      adaBaru = true;
     }
     pengamatKartu.unobserve(kartu);
   }
+  if (adaBaru) jadwalkanKirimImpresi();
 }, { rootMargin: '80px 0px' });
 
 export function amatiKartu(kartu) {
   pengamatKartu.observe(kartu);
 }
 
+let tinggiScrollMaks = 0;
+let melayangSaatIni = false;
+let keAtasTampil = false;
+let rafMenunggu = false;
+
+export function perbaruiUkuranDokumen() {
+  tinggiScrollMaks = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+}
+
+// Pemeriksaan posisi scroll:
+// 1. scrollHeight di-cache via perbaruiUkuranDokumen() dan hanya dihitung ulang
+//    saat render produk bertahap / resize, bukan membaca layout di tiap frame.
+// 2. Class dan attribute hidden dijaga guard boolean agar tidak merusak
+//    style/DOM secara redundan di tiap event scroll.
+// 3. Bar gulir memakai transform: scaleX (kompositor), bukan width (layout).
 export function periksaGulir() {
   const kepala = $('#kepala');
   const bar = $('#bar-gulir');
   const keAtas = $('#ke-atas');
 
   const y = window.scrollY;
-  kepala.classList.toggle('melayang', y > 8);
-  keAtas.hidden = y < 900;
 
-  const tinggiDokumen = document.documentElement.scrollHeight - window.innerHeight;
-  bar.style.width = (tinggiDokumen > 0 ? (y / tinggiDokumen) * 100 : 0) + '%';
+  const harusMelayang = y > 8;
+  if (harusMelayang !== melayangSaatIni) {
+    melayangSaatIni = harusMelayang;
+    kepala.classList.toggle('melayang', melayangSaatIni);
+  }
+
+  const harusKeAtas = y >= 900;
+  if (harusKeAtas !== keAtasTampil) {
+    keAtasTampil = harusKeAtas;
+    keAtas.hidden = !keAtasTampil;
+  }
+
+  if (tinggiScrollMaks <= 0) perbaruiUkuranDokumen();
+  const fraksi = tinggiScrollMaks > 0 ? Math.min(1, Math.max(0, y / tinggiScrollMaks)) : 0;
+  bar.style.transform = `scaleX(${fraksi})`;
 }
 
-// Alias saja supaya import { segarkanGulir } di katalog.js (TK-1081) tidak
-// pecah. Ini TIDAK menambah throttling/IntersectionObserver untuk bagian
-// header/bar/tombol-ke-atas -- periksaGulir tetap berjalan langsung di tiap
-// event scroll seperti semula, karena membenahi itu di luar scope TK-1081
-// (lihat TK-1063 untuk perbaikan sesungguhnya pada bagian ini).
-export const segarkanGulir = periksaGulir;
+function onScroll() {
+  if (rafMenunggu) return;
+  rafMenunggu = true;
+  requestAnimationFrame(() => {
+    rafMenunggu = false;
+    periksaGulir();
+  });
+}
+
+export function segarkanGulir() {
+  perbaruiUkuranDokumen();
+  periksaGulir();
+}
 
 export function pasangGulir() {
-  window.addEventListener('scroll', periksaGulir);
-  window.addEventListener('resize', periksaGulir);
+  segarkanGulir();
 
-  // Cegah "pull to refresh" tak sengaja di Android ketika pengguna sedang di puncak halaman.
-  let yAwal = 0;
-  const utama = $('#utama');
-  utama.addEventListener('touchstart', (e) => { yAwal = e.touches[0].clientY; }, { passive: false });
-  utama.addEventListener('touchmove', (e) => {
-    const menarikKeBawah = e.touches[0].clientY > yAwal;
-    if (window.scrollY === 0 && menarikKeBawah) e.preventDefault();
-    periksaGulir();
-  }, { passive: false });
-  utama.addEventListener('wheel', () => { periksaGulir(); }, { passive: false });
+  // Listener scroll dan resize menggunakan { passive: true } agar compositor thread
+  // dapat menggulir halaman secara asinkron tanpa harus menunggu main thread (TK-1063).
+  // Pencegahan pull-to-refresh Android ditangani via CSS overscroll-behavior-y: contain
+  // pada body, sehingga listener touchstart/touchmove/wheel non-passive tidak diperlukan.
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', () => {
+    perbaruiUkuranDokumen();
+    onScroll();
+  }, { passive: true });
 
-  $('#ke-atas').addEventListener('click', () => window.scrollTo({ top: 0 }));
+  $('#ke-atas').addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
 }
