@@ -476,5 +476,102 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
   tersebar) belum diuji langsung.
 
+---
+
+## P-07: Tombol "+ Keranjang" membeku karena serialisasi dan hashing 9.000 riwayat
+
+**Tiket terkait:** TK-1044
+**Tanggal entri ini:** 10/1/2026 (commit sebelum commit perbaikan)
+
+### Sebelum perbaikan
+
+- **Yang teramati (estimasi analitik, belum diukur):** Keluhan Pak Anton — tombol "+ Keranjang" dipencet
+  tidak ada reaksi apa-apa, setelah dipencet berkali-kali isi keranjang langsung menjadi 3.
+  Perkiraan mekanisme di `public/js/keranjang.js:68-94` (`tambahKeKeranjang`):
+  1. `siapkanRiwayatContoh()` menginisialisasi 9.000 objek riwayat ke `localStorage`.
+  2. Saat tombol diklik, `bacaRiwayat()` membaca dan mem-parse 9.000 objek JSON dari storage.
+  3. `window.Lacak.kirim('add_to_cart', { produk, keranjang, riwayat, ... })` mengirimkan seluruh
+     array `riwayat` (9.000 objek) ke SDK vendor.
+  4. Di `lacak.min.js`, fungsi `k()` melakukan `JSON.stringify` pada payload raksasa (>1 MB), lalu
+     menjalankan loop hashing `f()` sebanyak **2.000.000 iterasi**, serta `t(s)` yang mengiterasi
+     string sepanjang >1 MB sebanyak **12 putaran**.
+  5. `simpanRiwayat()` kembali memanggil `JSON.stringify` untuk 9.001 objek ke `localStorage`.
+  6. Seluruh proses ini berjalan sinkron di dalam handler klik **sebelum** tampilan sempat diperbarui
+     (`perbaruiLencana()`, `tombol.textContent = 'Ditambahkan ✓'`).
+  - **Estimasi:** INP pada skenario S2 melonjak hingga ratusan bahkan ribuan ms (>1.000 ms), terjadi long
+    task masif (>500 ms), dan browser tidak sempat me-render respons visual (rendering opportunity tertahan).
+    Pengguna mengira klik tidak terdaftar lalu menekan berulang kali, mengakibatkan penambahan ganda.
+
+- **Dugaan mekanisme:** Main thread diblokir oleh pemrosesan sinkron payload raksasa (JSON serialisasi,
+  2 juta iterasi hashing di SDK, dan disk I/O localStorage) sebelum update DOM dijalankan. Tidak adanya
+  feedback instan (*optimistic UI*) membuat pengguna mengulangi interaksi pada elemen yang tampak mati.
+
+- **Rencana perubahan:**
+  1. *Optimistic UI*: update tampilan tombol (`tombol.textContent = 'Ditambahkan ✓'`, class `sudah`),
+     lencana keranjang, dan toast secara instan di awal fungsi sebelum operasi berat apa pun.
+  2. Pangkas payload analitik: hanya kirim ringkasan riwayat terbaru (misal 5 aktivitas terakhir via
+     `riwayat.slice(-5)`) dan total panjang riwayat, bukan menduplikasi seluruh 9.000 entri ke SDK.
+  3. Tunda pemanggilan `Lacak.kirim` dan `simpanRiwayat` ke macrotask terpisah (`setTimeout(..., 0)` atau
+     `requestIdleCallback`) agar handler klik selesai seketika (<10 ms).
+  4. Guard klik: abaikan klik berulang selama status tombol masih `'sudah'` untuk mencegah spam klik.
+
+- **Prediksi terukur (estimasi analitik, belum diukur):**
+  - INP skenario S2 turun dari orde detik ke **<= 50 ms** (jauh di bawah target <= 200 ms).
+  - Long task selama interaksi klik S2 turun ke **0 ms** (tidak ada long task >100 ms).
+  - Pengguna melihat tombol berubah seketika setelah ditekan satu kali.
+
+- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:**
+  - Menghapus fitur riwayat penelusuran: DILARANG oleh Aturan 4 ("fitur tidak boleh dihapus").
+  - Menghapus event analitik `add_to_cart`: DILARANG oleh Aturan 1.
+
+---
+
+## P-08: Klik berulang "Beli sekarang" memicu pesanan ganda karena tidak ada penguncian proses
+
+**Tiket terkait:** TK-1052
+**Tanggal entri ini:** 10/1/2026 (commit sebelum commit perbaikan)
+
+### Sebelum perbaikan
+
+- **Yang teramati (estimasi analitik, belum diukur):** Keluhan Mbak Sari — menekan "Beli sekarang",
+  layar diam saja, lalu ditekan lagi sehingga terbit tiga pesanan untuk satu produk.
+  Perkiraan mekanisme di `public/js/keranjang.js:96-114` (`beliSekarang`):
+  1. Handler `beliSekarang` mengalami beban sinkron yang sama dengan `tambahKeKeranjang` (mengirim
+     seluruh 9.000 entri riwayat ke `Lacak.kirim` secara sinkron).
+  2. Setelah itu, `fetch('/api/pesanan', { method: 'POST', ... })` dipanggil. Server sengaja memberi
+     latensi buatan sebesar 350 ms (`await tunda(350)` di `server.js:155`).
+  3. Selama 350 ms masa tunggu jaringan tersebut, tombol "Beli sekarang" **tidak dinonaktifkan**
+     (`disabled = false`) dan teks tombol tetap "Beli sekarang" tanpa indikator proses apa pun.
+  4. Pengguna menekan tombol 3 kali secara cepat; setiap klik memicu `fetch` baru secara konkuren.
+  5. Ketiga permintaan diterima oleh server dan dicatat sebagai 3 pesanan terpisah (`TK-00001`, `TK-00002`,
+     `TK-00003`) di memori backend.
+  - **Estimasi:** Skenario S3 menghasilkan 3 pesanan dari 3 klik cepat (gagal memenuhi target tepat 1
+    pesanan), serta INP tinggi akibat pengiriman payload raksasa.
+
+- **Dugaan mekanisme:** Ketiadaan manajemen status *in-flight* (penguncian tombol / re-entrancy guard)
+  pada operasi asinkron jaringan, ditambah ketiadaan status visual bahwa pesanan sedang diproses.
+
+- **Rencana perubahan:**
+  1. Tambahkan proteksi konkurensi (*in-flight guard*) menggunakan Set atau atribut `disabled` pada tombol.
+     Jika pesanan untuk produk tersebut sedang berjalan, klik berikutnya langsung dibatalkan/diabaikan.
+  2. Berikan umpan balik instan: ubah teks tombol menjadi `'Memproses…'` dan pasang atribut `disabled = true`
+     sebelum permintaan `fetch` dikirim.
+  3. Pangkas payload analitik `begin_checkout` menjadi ringkasan riwayat terbaru (`riwayat.slice(-5)`) dan
+     tunda eksekusinya agar tidak memblokir antrean interaksi.
+  4. Setelah respons server diterima, perbarui teks menjadi `'Dipesan ✓'`, tampilkan toast pesanan,
+     dan setelah jeda 1,5 detik kembalikan status tombol ke normal.
+
+- **Prediksi terukur (estimasi analitik, belum diukur):**
+  - Jumlah pesanan yang tercatat di server dari tiga klik cepat berkurang dari 3 menjadi **tepat 1 pesanan**.
+  - Pengguna mengetahui pesanannya sedang diproses lewat teks "Memproses…" dan tombol yang dinonaktifkan.
+  - INP skenario S3 turun menjadi **<= 50 ms** dan long task **0 ms**.
+
+- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:**
+  - Menghilangkan latensi server di `server.js`: DILARANG oleh Aturan 1 (`server.js` tidak boleh diubah).
+  - Membatalkan request sebelumnya via `AbortController`: tetap berpotensi menimbulkan pesanan jika request
+    pertama sudah sampai di server sebelum dibatalkan. Penguncian tombol (*disabling trigger*) di sisi klien
+    adalah praktik standar industri untuk operasi transaksional.
+
+
 
 
