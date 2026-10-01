@@ -27,6 +27,10 @@ function buatKartu(produk) {
   const gambar = document.createElement('img');
   gambar.src = produk.gambar;
   gambar.alt = produk.nama;
+  // SVG produk selalu 480x480; atribut ini membuat browser memesan kotaknya
+  // sebelum biner datang, sehingga kartu tidak membesar sendiri saat gambar tiba.
+  gambar.width = 480;
+  gambar.height = 480;
   media.append(gambar);
 
   const badan = el('div', 'kartu-badan');
@@ -59,23 +63,10 @@ function buatKartu(produk) {
   return kartu;
 }
 
-// Judul produk panjangnya beda-beda (1-3 baris). Supaya harga & tombol dalam
-// satu deret sejajar rapi, tinggi judul disamakan mengikuti judul tertinggi.
-// Mengukur semua judul terlalu lambat, jadi cukup ukur sebagian sebagai contoh.
-const JUMLAH_CONTOH = 24;
-
-function samakanTinggiJudul() {
-  const judul = document.querySelectorAll('.kartu-judul');
-  let tertinggi = 0;
-  for (let i = 0; i < judul.length && i < JUMLAH_CONTOH; i++) {
-    const j = judul[i];
-    j.style.height = 'auto';
-    const tinggi = j.offsetHeight;
-    if (tinggi > tertinggi) tertinggi = tinggi;
-    j.style.height = tertinggi + 'px';
-  }
-  judul.forEach((j) => { j.style.height = tertinggi + 'px'; });
-}
+// Judul produk panjangnya beda-beda (1-3 baris). Tinggi diseragamkan oleh CSS
+// (.kartu-judul: -webkit-line-clamp + min-height), bukan oleh JS.
+// Versi lamanya membaca offsetHeight lalu menulis style.height di dalam loop --
+// paksa Layout sinkron dan mengubah tinggi setelah kartu sudah tergambar (CLS).
 
 export function renderProduk(daftar) {
   const kisi = $('#kisi');
@@ -92,13 +83,12 @@ export function renderProduk(daftar) {
     kisi.append(buatKartu(produk));
   }
 
-  samakanTinggiJudul();
   $('#ringkasan').textContent = daftar.length.toLocaleString('id-ID') + ' produk ditampilkan';
   periksaGulir();
 }
 
-// Menempel harga voucher ke kartu yang sudah ada, tanpa membongkar kisi.
-// renderProduk ulang (3.000 kartu + samakanTinggiJudul) adalah long task sendiri.
+// Menempel harga voucher ke kartu yang sudah ada, tanpa membongkar kisi:
+// renderProduk ulang untuk 3.000 kartu adalah long task sendiri.
 export function perbaruiHargaVoucherDiKartu() {
   const kartu = $('#kisi').children;
   for (let i = 0; i < kartu.length; i++) {

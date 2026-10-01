@@ -75,19 +75,31 @@ button { cursor: pointer; }
 
 .ringkasan { margin: 0 0 12px; color: var(--abu); }
 
-.promo-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--nila); color: var(--putih); border-radius: 12px; padding: 22px 20px; margin-bottom: 16px; min-height: 132px; }
+/* Tinggi dikunci (bukan min-height) supaya slot kosong di HTML dan banner yang
+   sudah terisi berukuran persis sama. Bila tingginya mengikuti konten, banner
+   yang datang ±1,8 dtk kemudian akan menggeser daftar produk -> CLS (TK-1078). */
+.promo-banner { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; background: var(--nila); color: var(--putih); border-radius: 12px; padding: 22px 20px; margin-bottom: 16px; height: 200px; overflow: hidden; }
+@media (min-width: 760px) { .promo-banner { height: 140px; } }
 .promo-banner h2 { margin: 0 0 4px; font: italic 900 22px/1.1 var(--huruf-tegas); }
 .promo-banner p { margin: 0; max-width: 60ch; }
 .promo-banner button { border: 0; border-radius: 8px; padding: 12px 18px; background: var(--kilat); color: var(--tinta); font-weight: 800; }
 
 /* ---------- kisi produk ---------- */
 .kisi { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 12px; }
-.kartu { position: relative; display: flex; flex-direction: column; background: var(--putih); border: 1px solid var(--garis); border-radius: 10px; overflow: hidden; opacity: 0; margin-top: 16px; transition: opacity .35s ease, margin-top .35s ease; }
-.kartu.terlihat { opacity: 1; margin-top: 0; }
+/* Transisi memakai opacity + transform, bukan margin-top: margin-top mengubah
+   tinggi baris kisi sehingga kartu di bawahnya ikut bergeser saat animasi
+   jalan -> layout shift (TK-1078). transform tidak menyentuh layout. */
+.kartu { position: relative; display: flex; flex-direction: column; background: var(--putih); border: 1px solid var(--garis); border-radius: 10px; overflow: hidden; opacity: 0; transform: translateY(16px); transition: opacity .35s ease, transform .35s ease; }
+.kartu.terlihat { opacity: 1; transform: none; }
 .kartu-media { display: block; background: var(--kabut); }
-.kartu-media img { display: block; width: 100%; height: auto; }
+/* width/height atribut di HTML + aspect-ratio di sini => ruang kotak gambar sudah
+   terpesan sebelum biner SVG datang, kartu tidak "tumbuh" saat gambar dimuat. */
+.kartu-media img { display: block; width: 100%; height: auto; aspect-ratio: 1 / 1; }
 .kartu-badan { display: flex; flex-direction: column; gap: 6px; padding: 10px; flex: 1; }
-.kartu-judul { margin: 0; font-size: 14px; font-weight: 500; line-height: 1.35; overflow: hidden; }
+/* Tinggi judul diseragamkan oleh CSS: 3 baris penuh untuk semua kartu, lebih dari
+   itu dipotong. Dulu tinggi judul diukur & ditulis JS (samakanTinggiJudul) --
+   membaca offsetHeight lalu menulis style.height = layout sinkron paksa. */
+.kartu-judul { margin: 0; font-size: 14px; font-weight: 500; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; min-height: calc(1.35em * 3); }
 .harga { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
 .harga-kini { font-size: 17px; font-weight: 800; color: var(--merah); }
 .harga-asli { font-size: 12px; color: var(--abu); text-decoration: line-through; }

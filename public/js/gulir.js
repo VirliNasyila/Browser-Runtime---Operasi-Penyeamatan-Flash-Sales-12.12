@@ -25,7 +25,8 @@ export function periksaGulir() {
     const masukLayar = kotak.top < tinggiLayar + 80 && kotak.bottom > -80;
     if (masukLayar && !kartu.classList.contains('terlihat')) {
       kartu.classList.add('terlihat');
-      kartu.style.minHeight = Math.round(kotak.height) + 'px'; // cegah kartu "mengempis" saat animasi
+      // dulu baris ini menulis minHeight setiap kali kartu masuk layar -> tulis
+      // layout saat scroll. Tidak perlu lagi: animasi kartu kini memakai transform.
     }
     if (masukLayar && !sudahTercatat.has(kartu.dataset.id)) {
       sudahTercatat.add(kartu.dataset.id);
