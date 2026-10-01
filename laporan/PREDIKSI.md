@@ -311,89 +311,6 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
 
 ---
 
-## P-06: Ribuan kartu (dan ribuan gambar) diminta render sekaligus
-
-**Tiket terkait:** TK-1081, sebagian TK-1041
-**Tanggal dan hash commit entri ini:** 10/1/2026, 2684f45
-
-### Sebelum perbaikan
-
-- **Yang teramati di trace (baseline):** Network tab (filter Img), reload lalu diam ~10 detik:
-  3000 dari 3016 total request adalah gambar produk (setiap produk sekaligus, bukan hanya
-  yang terlihat). Load event baru selesai di 24,70 detik; beberapa file individual
-  menunggu 16-17 detik karena mengantre (browser membatasi jumlah koneksi paralel per
-  domain). Total transferred bervariasi antar percobaan: 1.389 kB pada reload pertama,
-  3.306 kB pada reload kedua (indikasi hasil sensitif terhadap cache/kondisi jaringan
-  simulasi, bukan sekadar sekali ukur). Viewport 412x915 tanpa scroll hanya menampilkan
-  kira-kira 2-4 kartu utuh (estimasi dari screenshot, belum dihitung presisi karena
-  tertutup widget pengukur) dari 3000 yang di-request sekaligus. CLS turut tercatat sangat
-  bervariasi antar reload: 0 pada satu percobaan, 0,997 pada percobaan lain.
-
-  Catatan keterbatasan: angka di atas baru dari 2 kali reload, belum median 3x sesuai
-  protokol, dan jumlah kartu terlihat belum dihitung presisi. Variasi CLS yang besar
-  (0 vs 0,997) sendiri konsisten dengan dugaan mekanisme di bawah -- CLS bergantung pada
-  urutan/waktu gambar mana yang kebetulan selesai dimuat sebelum pengguna sempat
-  berinteraksi.
-
-- **Dugaan mekanisme:** Di `buatKartu()` (katalog.js), `gambar.src = produk.gambar` diset
-  langsung untuk tiap produk begitu elemen `<img>` dibuat, tanpa atribut `loading="lazy"`
-  atau `decoding="async"`. `renderProduk()` memanggil `buatKartu()` untuk SELURUH `daftar`
-  hasil filter dalam satu loop synchronous, sehingga begitu `innerHTML` kisi dibangun,
-  browser langsung menembak request untuk seluruh gambar sekaligus -- terlepas dari
-  apakah kartu tersebut berada di viewport atau jauh di luar layar. Karena `<img>` juga
-  tidak punya atribut `width`/`height`, browser tidak bisa mencadangkan ruang sebelum
-  gambar selesai dimuat, sehingga urutan kedatangan gambar (yang acak tergantung antrean
-  network) menyebabkan elemen-elemen bergeser saat gambar muncul belakangan -- ini
-  menjelaskan variasi CLS yang besar antar percobaan.
-
-- **Rencana perubahan:** (1) Tambah `loading="lazy" decoding="async"` serta
-  `width="480" height="480"` (ukuran asli gambar dari server) pada tiap `<img>` di
-  `buatKartu()`. (2) Pecah `renderProduk()` jadi render bertahap per 60 kartu, dipicu
-  `IntersectionObserver` pada penanda di ujung kisi, supaya DOM node (dan trigger
-  lazy-load) untuk kartu jauh di bawah tidak dibuat sampai pengguna benar-benar
-  menggulir mendekat.
-
-- **Prediksi terukur:** Jumlah request gambar dalam 10 detik pertama turun mendekati
-  jumlah kartu yang benar-benar terlihat di viewport (bukan 3000 sekaligus). CLS pada S0
-  turun ke <= 0,1 dan konsisten antar percobaan (varians besar yang teramati di baseline
-  hilang), karena ruang gambar sudah dicadangkan lewat `width`/`height` sebelum gambar
-  selesai dimuat. Efek samping: total waktu memuat SEMUA gambar (jika pengguna scroll
-  sampai habis) kurang lebih sama, hanya tersebar mengikuti kecepatan scroll.
-
-- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:** Pagination bernomor
-  halaman -- tidak dipilih karena mengubah cara pengguna menjangkau produk (klik vs
-  scroll), sementara produk tetap harus bisa dijangkau dengan menggulir sesuai aturan
-  tugas.
-
-### Sesudah perbaikan
-- **Hash commit perbaikan:** 2684f45
-
-- **Hasil ukur (median 3 kali):** Satu kali pengukuran (Network tab, filter Img, reload,
-  diam 10 detik): request gambar turun dari 3000/3016 menjadi 8/24 — mendekati jumlah
-  kartu yang benar-benar terlihat di viewport 412x915 ditambah buffer rootMargin 600px,
-  sesuai prediksi. Waktu selesai (Finish) turun drastis dari 24,70 detik menjadi 1,92
-  detik. CLS membaik ke 0,137 (dari rentang 0-0,997 yang sangat variatif sebelumnya).
-
-  Catatan keterbatasan: baru 1x pengukuran sesudah perbaikan, belum median 3x sesuai
-  protokol (sama seperti baseline-nya). Perlu diulang 2x lagi untuk memastikan hasil
-  konsisten, terutama untuk angka CLS yang sebelumnya terbukti variatif.
-
-- **Prediksi vs kenyataan:** Prediksi bahwa jumlah request akan turun "sebanding dengan
-  kartu yang terlihat" terbukti benar (8 dari 3000, bukan lagi seluruh katalog). Prediksi
-  CLS turun ke <= 0,1 **belum sepenuhnya tercapai** — hasil 0,137 sudah jauh membaik dan
-  jauh lebih stabil dibanding sebelumnya, tapi masih sedikit di atas target. Kemungkinan
-  penyebab sisa: `min-height: calc(1.35em * 2)` di CSS judul belum presisi sama dengan
-  tinggi asli judul 2 baris pada semua ukuran font/judul, sehingga masih ada sedikit
-  pergeseran saat render. Ini belum diverifikasi lebih lanjut.
-
-- **Efek samping yang muncul:** Belum terdeteksi efek samping negatif pada fungsi scroll
-  (kartu baru tetap muncul dengan animasi saat digulir) maupun pencarian (hasil filter
-  tetap ter-render dengan staged rendering). Efek samping yang diharapkan sesuai rencana
-  (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
-  tersebar) belum diuji langsung.
-
----
-
 ## P-05: Scroll patah-patah akibat listener non-passive, layout thrashing di periksaGulir, dan hashing analitik sinkron per kartu
 
 **Tiket terkait:** TK-1063
@@ -475,5 +392,89 @@ bagian "sebelum" setelah hasilnya diketahui; bila prediksi meleset, jelaskan di 
   - Jumlah frame lambat (>50 ms) selama skenario S5 diproyeksikan turun drastis hingga memenuhi target `<= 2` per 10 detik.
 - **Prediksi vs kenyataan:** belum dapat dibandingkan tanpa rekaman fisik (opsional), namun mekanisme bottleneck (pemblokiran thread kompositor, layout thrashing, dan hashing sinkron saat scroll) teratasi secara tuntas di kode.
 - **Efek samping yang muncul:** Impresi analitik dikirim dengan sedikit jeda (batch saat idle), namun seluruh ID produk yang tampil tetap tercatat lengkap dan masuk akal sesuai ketentuan Aturan 1.
+
+---
+
+## P-06: Ribuan kartu (dan ribuan gambar) diminta render sekaligus
+
+**Tiket terkait:** TK-1081, sebagian TK-1041
+**Tanggal dan hash commit entri ini:** 10/1/2026, 2684f45
+
+### Sebelum perbaikan
+
+- **Yang teramati di trace (baseline):** Network tab (filter Img), reload lalu diam ~10 detik:
+  3000 dari 3016 total request adalah gambar produk (setiap produk sekaligus, bukan hanya
+  yang terlihat). Load event baru selesai di 24,70 detik; beberapa file individual
+  menunggu 16-17 detik karena mengantre (browser membatasi jumlah koneksi paralel per
+  domain). Total transferred bervariasi antar percobaan: 1.389 kB pada reload pertama,
+  3.306 kB pada reload kedua (indikasi hasil sensitif terhadap cache/kondisi jaringan
+  simulasi, bukan sekadar sekali ukur). Viewport 412x915 tanpa scroll hanya menampilkan
+  kira-kira 2-4 kartu utuh (estimasi dari screenshot, belum dihitung presisi karena
+  tertutup widget pengukur) dari 3000 yang di-request sekaligus. CLS turut tercatat sangat
+  bervariasi antar reload: 0 pada satu percobaan, 0,997 pada percobaan lain.
+
+  Catatan keterbatasan: angka di atas baru dari 2 kali reload, belum median 3x sesuai
+  protokol, dan jumlah kartu terlihat belum dihitung presisi. Variasi CLS yang besar
+  (0 vs 0,997) sendiri konsisten dengan dugaan mekanisme di bawah -- CLS bergantung pada
+  urutan/waktu gambar mana yang kebetulan selesai dimuat sebelum pengguna sempat
+  berinteraksi.
+
+- **Dugaan mekanisme:** Di `buatKartu()` (katalog.js), `gambar.src = produk.gambar` diset
+  langsung untuk tiap produk begitu elemen `<img>` dibuat, tanpa atribut `loading="lazy"`
+  atau `decoding="async"`. `renderProduk()` memanggil `buatKartu()` untuk SELURUH `daftar`
+  hasil filter dalam satu loop synchronous, sehingga begitu `innerHTML` kisi dibangun,
+  browser langsung menembak request untuk seluruh gambar sekaligus -- terlepas dari
+  apakah kartu tersebut berada di viewport atau jauh di luar layar. Karena `<img>` juga
+  tidak punya atribut `width`/`height`, browser tidak bisa mencadangkan ruang sebelum
+  gambar selesai dimuat, sehingga urutan kedatangan gambar (yang acak tergantung antrean
+  network) menyebabkan elemen-elemen bergeser saat gambar muncul belakangan -- ini
+  menjelaskan variasi CLS yang besar antar percobaan.
+
+- **Rencana perubahan:** (1) Tambah `loading="lazy" decoding="async"` serta
+  `width="480" height="480"` (ukuran asli gambar dari server) pada tiap `<img>` di
+  `buatKartu()`. (2) Pecah `renderProduk()` jadi render bertahap per 60 kartu, dipicu
+  `IntersectionObserver` pada penanda di ujung kisi, supaya DOM node (dan trigger
+  lazy-load) untuk kartu jauh di bawah tidak dibuat sampai pengguna benar-benar
+  menggulir mendekat.
+
+- **Prediksi terukur:** Jumlah request gambar dalam 10 detik pertama turun mendekati
+  jumlah kartu yang benar-benar terlihat di viewport (bukan 3000 sekaligus). CLS pada S0
+  turun ke <= 0,1 dan konsisten antar percobaan (varians besar yang teramati di baseline
+  hilang), karena ruang gambar sudah dicadangkan lewat `width`/`height` sebelum gambar
+  selesai dimuat. Efek samping: total waktu memuat SEMUA gambar (jika pengguna scroll
+  sampai habis) kurang lebih sama, hanya tersebar mengikuti kecepatan scroll.
+
+- **Alternatif yang dipertimbangkan dan alasan tidak dipilih:** Pagination bernomor
+  halaman -- tidak dipilih karena mengubah cara pengguna menjangkau produk (klik vs
+  scroll), sementara produk tetap harus bisa dijangkau dengan menggulir sesuai aturan
+  tugas.
+
+### Sesudah perbaikan
+- **Hash commit perbaikan:** 2684f45
+
+- **Hasil ukur (median 3 kali):** Satu kali pengukuran (Network tab, filter Img, reload,
+  diam 10 detik): request gambar turun dari 3000/3016 menjadi 8/24 — mendekati jumlah
+  kartu yang benar-benar terlihat di viewport 412x915 ditambah buffer rootMargin 600px,
+  sesuai prediksi. Waktu selesai (Finish) turun drastis dari 24,70 detik menjadi 1,92
+  detik. CLS membaik ke 0,137 (dari rentang 0-0,997 yang sangat variatif sebelumnya).
+
+  Catatan keterbatasan: baru 1x pengukuran sesudah perbaikan, belum median 3x sesuai
+  protokol (sama seperti baseline-nya). Perlu diulang 2x lagi untuk memastikan hasil
+  konsisten, terutama untuk angka CLS yang sebelumnya terbukti variatif.
+
+- **Prediksi vs kenyataan:** Prediksi bahwa jumlah request akan turun "sebanding dengan
+  kartu yang terlihat" terbukti benar (8 dari 3000, bukan lagi seluruh katalog). Prediksi
+  CLS turun ke <= 0,1 **belum sepenuhnya tercapai** — hasil 0,137 sudah jauh membaik dan
+  jauh lebih stabil dibanding sebelumnya, tapi masih sedikit di atas target. Kemungkinan
+  penyebab sisa: `min-height: calc(1.35em * 2)` di CSS judul belum presisi sama dengan
+  tinggi asli judul 2 baris pada semua ukuran font/judul, sehingga masih ada sedikit
+  pergeseran saat render. Ini belum diverifikasi lebih lanjut.
+
+- **Efek samping yang muncul:** Belum terdeteksi efek samping negatif pada fungsi scroll
+  (kartu baru tetap muncul dengan animasi saat digulir) maupun pencarian (hasil filter
+  tetap ter-render dengan staged rendering). Efek samping yang diharapkan sesuai rencana
+  (total waktu muat semua gambar jika di-scroll sampai habis kurang lebih sama, hanya
+  tersebar) belum diuji langsung.
+
 
 
