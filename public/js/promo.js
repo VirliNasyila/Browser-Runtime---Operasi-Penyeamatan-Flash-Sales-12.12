@@ -14,32 +14,28 @@ const duaDigit = (n) => String(n).padStart(2, '0');
 function pasangHitungMundur() {
   const akhir = akhirFlashSale();
   const awal = Date.now();
-  const wadah = $('#hitung-mundur');
+  const total = akhir - awal + 1;
   const garis = $('#hm-garis');
-  const jam = $('#hm-jam'), menit = $('#hm-menit'), detik = $('#hm-detik'), senti = $('#hm-senti');
+  const jam = $('#hm-jam'), menit = $('#hm-menit'), detik = $('#hm-detik');
 
-  // 10 ms supaya angka perseratus detik terlihat mulus
-  setInterval(() => {
+  // Satu tugas per detik, hanya menulis angka yang benar-benar berubah.
+  // Garis memakai transform: scaleX (properti komposit) sehingga tidak pernah
+  // membaca offsetWidth -- dulu pembacaan itu memaksa Layout di tiap tick 10 ms.
+  const tulis = (node, nilai) => {
+    const teks = duaDigit(nilai);
+    if (node.textContent !== teks) node.textContent = teks;
+  };
+
+  function maju() {
     const sisa = Math.max(akhir - Date.now(), 0);
-    jam.textContent = duaDigit(Math.floor(sisa / 3600000));
-    menit.textContent = duaDigit(Math.floor((sisa % 3600000) / 60000));
-    detik.textContent = duaDigit(Math.floor((sisa % 60000) / 1000));
-    senti.textContent = duaDigit(Math.floor((sisa % 1000) / 10));
-
-    // garis di bawah angka menyusut mengikuti sisa waktu
-    const lebarPenuh = wadah.offsetWidth;
-    garis.style.width = Math.round(lebarPenuh * (sisa / (akhir - awal + 1))) + 'px';
-  }, 10);
-}
-
-function pasangTeksBerjalan() {
-  const teks = $('#berjalan-teks');
-  let x = teks.parentElement.offsetWidth;
-  setInterval(() => {
-    x -= 1;
-    if (x < -teks.offsetWidth) x = teks.parentElement.offsetWidth;
-    teks.style.left = x + 'px';
-  }, 10);
+    tulis(jam, Math.floor(sisa / 3600000));
+    tulis(menit, Math.floor((sisa % 3600000) / 60000));
+    tulis(detik, Math.floor((sisa % 60000) / 1000));
+    garis.style.transform = 'scaleX(' + (sisa / total).toFixed(5) + ')';
+    // diselaraskan ke batas detik jam dinding supaya angka tidak meleset
+    setTimeout(maju, 1000 - (Date.now() % 1000));
+  }
+  maju();
 }
 
 async function pasangBannerPromo() {
@@ -62,6 +58,5 @@ async function pasangBannerPromo() {
 
 export function pasangPromo() {
   pasangHitungMundur();
-  pasangTeksBerjalan();
   pasangBannerPromo();
 }
