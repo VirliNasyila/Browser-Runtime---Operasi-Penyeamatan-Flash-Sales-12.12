@@ -281,3 +281,6 @@ tab; temuan T-04 dan T-05 dari tim lain (TK-1041, TK-1081) juga memakai angka te
   1. Faiz Akhsya 241524039 — TK-1057 (P-02), TK-1070 (P-03), TK-1078 (P-04)
   2. Idotoho Reimon Simanjuntak 241524047 — TK-1063 (P-05, T-06), TK-1044 (P-07, T-07), TK-1052 (P-08, T-08)
   3. Virli Nasyila Putri 241524062 — TK-1041 (P-01, T-04), TK-1081 (P-06, T-05)
+
+# Repositori Git
+https://github.com/VirliNasyila/Browser-Runtime---Operasi-Penyeamatan-Flash-Sales-12.12
